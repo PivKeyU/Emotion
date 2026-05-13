@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -103,6 +104,43 @@ func TestParseFilename_JustE(t *testing.T) {
 	p := ParseFilename("Show_E07_Title.mkv")
 	if p.Episode != 7 {
 		t.Fatalf("episode = %d", p.Episode)
+	}
+}
+
+// TestParseFilename_ProviderTags covers Emby/Jellyfin folder conventions like
+// "A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]" and variants.
+func TestParseFilename_ProviderTags(t *testing.T) {
+	cases := []struct {
+		name     string
+		in       string
+		wantTmdb string
+		wantImdb string
+		wantTvdb string
+	}{
+		{"tmdb equals", "Foo (2014) [tmdb=502419].mkv", "502419", "", ""},
+		{"tmdb dash", "Foo [tmdb-502419].mkv", "502419", "", ""},
+		{"tmdbid alias", "Foo [tmdbid=502419].mkv", "502419", "", ""},
+		{"imdb tag", "Foo (2014) [imdb=tt1234567].mkv", "", "tt1234567", ""},
+		{"tvdb tag", "Show [tvdb=99999].mkv", "", "", "99999"},
+		{"chinese with tmdb", "A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]", "502419", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ParseFilename(tc.in)
+			if p.TMDBID != tc.wantTmdb {
+				t.Errorf("tmdb = %q, want %q", p.TMDBID, tc.wantTmdb)
+			}
+			if p.IMDBID != tc.wantImdb {
+				t.Errorf("imdb = %q, want %q", p.IMDBID, tc.wantImdb)
+			}
+			if p.TVDBID != tc.wantTvdb {
+				t.Errorf("tvdb = %q, want %q", p.TVDBID, tc.wantTvdb)
+			}
+			// Provider tag must not bleed into the title.
+			if strings.Contains(p.Title, "[") || strings.Contains(p.Title, "tmdb") {
+				t.Errorf("provider tag leaked into title: %q", p.Title)
+			}
+		})
 	}
 }
 

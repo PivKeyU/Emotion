@@ -15,6 +15,7 @@ import (
 	"github.com/PivKeyU/Next-Emby/internal/config"
 	"github.com/PivKeyU/Next-Emby/internal/importer"
 	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
+	"github.com/PivKeyU/Next-Emby/internal/tmdb"
 )
 
 // Admin serves /admin/* endpoints for manual library management.
@@ -24,15 +25,27 @@ type Admin struct {
 	cfg      *config.Config
 	log      *slog.Logger
 	importer *importer.Importer
+	tmdb     *tmdb.Client // may be nil
+	scraper  *tmdb.Scraper
 }
 
 // NewAdmin constructs the handler.
 func NewAdmin(database *sql.DB, cfg *config.Config, log *slog.Logger) *Admin {
+	var (
+		client  *tmdb.Client
+		scraper *tmdb.Scraper
+	)
+	if cfg.TMDBAPIKey != "" {
+		client = tmdb.NewClient(cfg.TMDBAPIKey, tmdb.WithLanguage(cfg.TMDBLanguage))
+		scraper = tmdb.NewScraper(client, database, log)
+	}
 	return &Admin{
 		db:       database,
 		cfg:      cfg,
 		log:      log,
 		importer: importer.New(database, log),
+		tmdb:     client,
+		scraper:  scraper,
 	}
 }
 
@@ -143,6 +156,9 @@ type scanRequest struct {
 	DefaultType    string `json:"default_type"` // movie | tv | (empty = auto)
 	FollowSymlinks bool   `json:"follow_symlinks"`
 	DryRun         bool   `json:"dry_run"`
+	// Scrape controls TMDB backfill on items touched by this import.
+	// Accepts: "" (use server default TMDB_AUTO_SCRAPE), "on", "off", "force".
+	Scrape string `json:"scrape"`
 }
 
 // LibraryScan runs a synchronous import from a local directory.
@@ -153,8 +169,7 @@ type scanRequest struct {
 //	  "library_id": 1,
 //	  "root": "/data/movies",
 //	  "default_type": "movie",
-//	  "follow_symlinks": false,
-//	  "dry_run": false
+//	  "scrape": "on"
 //	}
 //
 // Returns a JSON report on completion. Safe to call repeatedly: writes are idempotent.
@@ -199,5 +214,94 @@ func (a *Admin) LibraryScan(w http.ResponseWriter, r *http.Request) {
 		WriteText(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Optional TMDB backfill for items touched by this import.
+	if !body.DryRun {
+		mode := strings.ToLower(strings.TrimSpace(body.Scrape))
+		wantScrape := mode == "on" || mode == "force" ||
+			(mode == "" && a.cfg.TMDBAutoScrape)
+		if wantScrape && a.scraper != nil && a.scraper.Enabled() {
+			scrapeResults := make([]*tmdb.ScrapeResult, 0, len(report.TouchedVideoListIDs))
+			for _, id := range report.TouchedVideoListIDs {
+				res, err := a.scraper.ScrapeVideoList(r.Context(), id, mode == "force")
+				if err != nil {
+					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
+					continue
+				}
+				scrapeResults = append(scrapeResults, res)
+			}
+			WriteJSON(w, http.StatusOK, map[string]any{
+				"import": report,
+				"tmdb":   scrapeResults,
+			})
+			return
+		}
+	}
+
 	WriteJSON(w, http.StatusOK, report)
+}
+
+// TMDBRefreshOneRequest is the POST body for refreshing a single item.
+type tmdbRefreshRequest struct {
+	Force bool `json:"force"`
+}
+
+// TMDBRefreshOne refreshes TMDB metadata for one video_list by id.
+//
+// POST /admin/items/{id}/tmdb/refresh  {"force": false}
+func (a *Admin) TMDBRefreshOne(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if a.scraper == nil || !a.scraper.Enabled() {
+		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+
+	var body tmdbRefreshRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+
+	res, err := a.scraper.ScrapeVideoList(r.Context(), id, body.Force)
+	if err != nil {
+		a.log.Error("tmdb refresh failed", "err", err)
+		WriteText(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+// TMDBRefreshAllRequest is the POST body for the bulk refresh endpoint.
+type tmdbRefreshAllRequest struct {
+	Max   int  `json:"max"`
+	Force bool `json:"force"`
+}
+
+// TMDBRefreshAll scans all items missing metadata and refreshes each.
+//
+// POST /admin/tmdb/refresh-all  {"max": 200, "force": false}
+func (a *Admin) TMDBRefreshAll(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if a.scraper == nil || !a.scraper.Enabled() {
+		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		return
+	}
+	var body tmdbRefreshAllRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+
+	rep, err := a.scraper.ScrapeAllMissing(r.Context(), body.Max, body.Force)
+	if err != nil {
+		a.log.Error("tmdb refresh-all failed", "err", err)
+		WriteText(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, rep)
 }

@@ -9,6 +9,9 @@ import (
 
 // Regexes compiled once at package load.
 var (
+	// Provider id tag like [tmdb=502419] or [tmdbid-502419] or [imdb=tt1234567].
+	// Case-insensitive, accepts = or -.
+	reProviderTag = regexp.MustCompile(`(?i)\[(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[=\-:]\s*([a-z0-9]+)\]`)
 	// "Movie Title (2023)" or "Movie Title [2023]"
 	reTitleYear = regexp.MustCompile(`^(?P<title>.+?)[\s._]*[\(\[](?P<year>(19|20)\d{2})[\)\]]`)
 	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show.Name.1x02"
@@ -35,6 +38,10 @@ type ParsedName struct {
 	Year    int
 	Season  int // 0 when unknown
 	Episode int // 0 when unknown
+	// Provider-assigned ids found in "[tmdb=N]" / "[imdb=ttN]" / "[tvdb=N]" tags.
+	TMDBID string
+	IMDBID string
+	TVDBID string
 }
 
 // IsEpisode reports whether we parsed any season/episode hint.
@@ -79,6 +86,22 @@ func ParseSeasonFolder(folder string) int {
 // parseBase operates on the extensionless basename.
 func parseBase(s string) ParsedName {
 	p := ParsedName{}
+
+	// 0. Extract any [tmdb=...] / [imdb=...] / [tvdb=...] tags, then strip them
+	//    from the working string so they don't confuse the year / title regexes.
+	for _, m := range reProviderTag.FindAllStringSubmatch(s, -1) {
+		kind := strings.ToLower(m[1])
+		val := m[2]
+		switch kind {
+		case "tmdb", "tmdbid":
+			p.TMDBID = val
+		case "imdb", "imdbid":
+			p.IMDBID = val
+		case "tvdb", "tvdbid":
+			p.TVDBID = val
+		}
+	}
+	s = reProviderTag.ReplaceAllString(s, "")
 
 	// 1. Try SxxExx / NxN — strongest signal for TV.
 	if m := reSxxExx.FindStringSubmatch(s); len(m) == 3 {
@@ -152,4 +175,20 @@ func cleanTitle(s string) string {
 	// Drop leading/trailing punctuation.
 	s = strings.Trim(s, " -[](){}")
 	return s
+}
+
+
+
+// looksLikePlaceholder detects titles that came from a generic-looking filename
+// ("01", "Part 1", short ASCII tokens) and would benefit from being replaced
+// with a better candidate from the parent folder.
+func looksLikePlaceholder(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return true
+	}
+	if len(s) <= 3 {
+		return true
+	}
+	return false
 }

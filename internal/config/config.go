@@ -34,6 +34,16 @@ type Config struct {
 	APIKey      string
 	APIExternal string
 
+	// TMDBAPIKey enables automatic metadata backfill. Accepts either a v3
+	// API key (32 hex chars) or a v4 bearer token (eyJ...). Leave empty to
+	// disable TMDB integration entirely.
+	TMDBAPIKey string
+	// TMDBLanguage overrides the response language (default: zh-CN).
+	TMDBLanguage string
+	// TMDBAutoScrape controls whether the library scanner automatically
+	// scrapes TMDB metadata for each newly-imported item.
+	TMDBAutoScrape bool
+
 	SearchDefaultList string
 
 	EmbyVersion          string
@@ -66,6 +76,10 @@ func Load() *Config {
 
 		APIKey:      getEnv("API_KEY", ""),
 		APIExternal: getEnv("API_EXTERNAL", ""),
+
+		TMDBAPIKey:     getEnv("TMDB_API_KEY", ""),
+		TMDBLanguage:   getEnv("TMDB_LANGUAGE", "zh-CN"),
+		TMDBAutoScrape: strings.EqualFold(getEnv("TMDB_AUTO_SCRAPE", "true"), "true"),
 
 		SearchDefaultList: getEnv("SEARCH_DEFAULT_LIST", `{"欢迎来到 next-emby":1}`),
 

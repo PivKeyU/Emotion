@@ -49,6 +49,11 @@ type Report struct {
 	MediaRows  int           `json:"media_rows_imported"`
 	Skipped    int           `json:"skipped"`
 	Errors     []string      `json:"errors,omitempty"`
+
+	// TouchedVideoListIDs is the set of video_list rows that were inserted or
+	// updated during this run. Callers (typically the admin handler) can
+	// forward these to a TMDB scraper for post-import metadata backfill.
+	TouchedVideoListIDs []int64 `json:"touched_video_list_ids,omitempty"`
 }
 
 // Importer coordinates scanning and DB upserts.
@@ -131,6 +136,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 				rootPath:    dirPath,
 			}
 			rep.Series++
+			rep.TouchedVideoListIDs = appendUnique(rep.TouchedVideoListIDs, series.id)
 			// Fallthrough: also process any episode files in this same dir.
 		} else if activeSeries != nil && !strings.HasPrefix(dirPath, activeSeries.rootPath) {
 			// We walked past the active series root — drop it.
@@ -152,13 +158,17 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 			}
 			switch classified.kind {
 			case itemKindMovie:
-				if _, err := i.upsertMovie(ctx, opts, bucket, mediaPath, classified); err != nil {
+				movie, err := i.upsertMovie(ctx, opts, bucket, mediaPath, classified)
+				if err != nil {
 					rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", mediaPath, err))
 					log.Warn("upsert movie failed", "path", mediaPath, "err", err)
 					continue
 				}
 				rep.Movies++
 				rep.MediaRows++
+				if movie != nil && movie.id > 0 {
+					rep.TouchedVideoListIDs = appendUnique(rep.TouchedVideoListIDs, movie.id)
+				}
 			case itemKindEpisode:
 				if activeSeries == nil {
 					// Promote: create a minimal series from parsed folder/filename.
@@ -174,6 +184,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 						rootPath:    seriesRootFor(dirPath, classified.parsed.Season),
 					}
 					rep.Series++
+					rep.TouchedVideoListIDs = appendUnique(rep.TouchedVideoListIDs, series.id)
 				}
 				sawNewSeason, err := i.upsertEpisode(ctx, opts, bucket, mediaPath,
 					classified, activeSeries.videoListID, activeSeries.showTitle)
@@ -187,6 +198,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 				}
 				rep.Episodes++
 				rep.MediaRows++
+				rep.TouchedVideoListIDs = appendUnique(rep.TouchedVideoListIDs, activeSeries.videoListID)
 			}
 		}
 	}
@@ -221,6 +233,29 @@ type classifiedMedia struct {
 func (i *Importer) classifyMedia(mediaPath string, bucket *DirFiles, defaultType string) (*classifiedMedia, error) {
 	c := &classifiedMedia{
 		parsed: ParseFilename(filepath.Base(mediaPath)),
+	}
+
+	// Also look at the parent folder name for provider tags / year. When the
+	// filename itself has no hint, inherit whatever the parent dir declares
+	// (e.g. "A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]/foo.mp4").
+	if parentHint := ParseFilename(filepath.Base(filepath.Dir(mediaPath))); true {
+		if c.parsed.TMDBID == "" && parentHint.TMDBID != "" {
+			c.parsed.TMDBID = parentHint.TMDBID
+		}
+		if c.parsed.IMDBID == "" && parentHint.IMDBID != "" {
+			c.parsed.IMDBID = parentHint.IMDBID
+		}
+		if c.parsed.TVDBID == "" && parentHint.TVDBID != "" {
+			c.parsed.TVDBID = parentHint.TVDBID
+		}
+		if c.parsed.Year == 0 && parentHint.Year > 0 {
+			c.parsed.Year = parentHint.Year
+		}
+		// Title: prefer the (usually richer) parent dir name when the file
+		// itself produced a placeholder-looking title.
+		if parentHint.Title != "" && looksLikePlaceholder(c.parsed.Title) {
+			c.parsed.Title = parentHint.Title
+		}
 	}
 
 	// Per-file NFO (e.g. foo.mkv.nfo or foo.nfo next to foo.mkv).
@@ -341,6 +376,11 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 	air := sql.NullTime{}
 	runtime := 0
 
+	// TMDB id from the folder/filename tag (e.g. "[tmdb=502419]").
+	if c.parsed.TMDBID != "" {
+		tmdbID = sql.NullString{Valid: true, String: c.parsed.TMDBID}
+	}
+
 	if c.nfo != nil {
 		if c.nfo.Title != "" {
 			title = c.nfo.Title
@@ -349,6 +389,7 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 		if d := c.nfo.Description(); d != "" {
 			desc = sql.NullString{Valid: true, String: d}
 		}
+		// NFO id beats filename tag when both are present.
 		if t := c.nfo.Tmdb(); t != "" {
 			tmdbID = sql.NullString{Valid: true, String: t}
 		}
@@ -804,3 +845,15 @@ func newUUID() string {
 
 // Render returns a JSON summary for the admin endpoint.
 func (r *Report) Render() ([]byte, error) { return json.Marshal(r) }
+
+
+
+// appendUnique appends id to dst if not already present.
+func appendUnique(dst []int64, id int64) []int64 {
+	for _, x := range dst {
+		if x == id {
+			return dst
+		}
+	}
+	return append(dst, id)
+}
