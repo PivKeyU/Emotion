@@ -19,6 +19,16 @@ func NewRouter(deps *Dependencies) http.Handler {
 	sys := handlers.NewSystem(deps.Config)
 	userH := handlers.NewUsers(deps.DB, deps.Config, deps.Logger)
 	items := handlers.NewItems(deps.DB, deps.Cache, deps.Config, deps.Logger)
+	dash := handlers.NewDashboard()
+
+	// Visual admin dashboard. The HTML is just a static asset; it prompts for
+	// an API key at runtime and calls authenticated /admin/* and /emby/* APIs
+	// on the user's behalf, so we expose it without the auth guard.
+	r.Get("/admin/ui", dash.Page)
+	r.Get("/admin/ui/", dash.Page)
+	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, "/admin/ui", http.StatusTemporaryRedirect)
+	})
 
 	// emby paths are accepted both with and without the "/emby" prefix so native clients
 	// and direct integrations both work (real Emby accepts both too).

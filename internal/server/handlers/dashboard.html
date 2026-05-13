@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Emotion · 管理面板</title>
+<style>
+  :root {
+    --bg:        #0f1115;
+    --panel:     #171a21;
+    --panel-2:   #1e222c;
+    --border:    #262b36;
+    --text:      #e6e9ef;
+    --muted:     #8b93a7;
+    --accent:    #5b8cff;
+    --accent-2:  #4670d8;
+    --ok:        #2fbf71;
+    --warn:      #e4a72d;
+    --err:       #e05858;
+    --mono:      ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ---------- layout ---------- */
+  header.topbar {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px;
+    background: linear-gradient(180deg, #181c25 0%, #14171f 100%);
+    border-bottom: 1px solid var(--border);
+  }
+  header.topbar h1 {
+    margin: 0; font-size: 16px; font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  header.topbar h1 .mark { color: var(--accent); }
+  header.topbar .grow { flex: 1; }
+  header.topbar input {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px; border-radius: 6px; font-size: 13px;
+    min-width: 220px;
+  }
+  header.topbar input:focus { outline: 1px solid var(--accent); }
+
+  .status-pill {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--muted);
+  }
+  .status-pill.ok  { color: var(--ok);  border-color: #1b5e3a; }
+  .status-pill.err { color: var(--err); border-color: #5a2a2a; }
+
+  main.container {
+    display: grid; grid-template-columns: 220px 1fr;
+    min-height: calc(100vh - 52px);
+  }
+  nav.sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 14px 10px;
+  }
+  nav.sidebar .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; border-radius: 6px;
+    color: var(--muted); cursor: pointer; user-select: none;
+  }
+  nav.sidebar .nav-item:hover { background: var(--panel-2); color: var(--text); }
+  nav.sidebar .nav-item.active {
+    background: var(--panel-2); color: var(--text);
+    border-left: 2px solid var(--accent); padding-left: 10px;
+  }
+  nav.sidebar .nav-item .ico { width: 16px; text-align: center; opacity: 0.8; }
+
+  section.view {
+    padding: 22px 28px; overflow: auto;
+  }
+  section.view h2 {
+    margin: 0 0 4px; font-size: 18px; font-weight: 600;
+  }
+  section.view .view-desc { color: var(--muted); margin: 0 0 22px; }
+
+  /* ---------- cards & grids ---------- */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    margin-bottom: 16px;
+  }
+  .card h3 {
+    margin: 0 0 10px; font-size: 14px; font-weight: 600;
+    color: var(--text);
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .col { display: flex; flex-direction: column; gap: 4px; min-width: 160px; }
+  .col label { color: var(--muted); font-size: 12px; }
+  .col input, .col select, .col textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .col input:focus, .col select:focus, .col textarea:focus { outline: 1px solid var(--accent); }
+  .col textarea { font-family: var(--mono); min-height: 80px; }
+  .col.grow { flex: 1; }
+  .checkbox { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .checkbox input { accent-color: var(--accent); }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    background: var(--accent); color: white; border: none;
+    padding: 7px 14px; border-radius: 6px; font-size: 13px;
+    cursor: pointer; font-weight: 500;
+  }
+  .btn:hover { background: var(--accent-2); }
+  .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); }
+  .btn.secondary:hover { background: #252a35; }
+  .btn.danger { background: #5a2a2a; color: var(--err); border: 1px solid #5a2a2a; }
+  .btn.danger:hover { background: #7a3535; color: #ffb0b0; }
+  .btn.sm { padding: 4px 9px; font-size: 12px; }
+
+  /* ---------- tables ---------- */
+  table.data {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  table.data th, table.data td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: middle;
+  }
+  table.data th {
+    color: var(--muted); font-weight: 500; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    background: var(--panel-2);
+  }
+  table.data tr:hover td { background: rgba(91, 140, 255, 0.04); }
+  table.data td.num { text-align: right; font-family: var(--mono); }
+  table.data td.actions { text-align: right; white-space: nowrap; }
+  table.data td.empty {
+    text-align: center; padding: 30px; color: var(--muted);
+  }
+  .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 999px;
+    font-size: 11px; background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .tag.ok { color: var(--ok); border-color: #1b5e3a; }
+  .tag.warn { color: var(--warn); border-color: #6a5020; }
+  .tag.err { color: var(--err); border-color: #5a2a2a; }
+
+  /* ---------- stats ---------- */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 22px; font-weight: 600; margin-top: 4px; }
+
+  /* ---------- output / log ---------- */
+  pre.output {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    max-height: 360px; overflow: auto;
+    font-family: var(--mono); font-size: 12px;
+    white-space: pre-wrap; word-break: break-all;
+    color: #cfd4e0;
+  }
+  pre.output.empty { color: var(--muted); }
+
+  /* ---------- toast ---------- */
+  #toast-box {
+    position: fixed; bottom: 24px; right: 24px;
+    display: flex; flex-direction: column; gap: 8px; z-index: 100;
+  }
+  .toast {
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 10px 14px; border-radius: 8px; min-width: 220px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    animation: slidein 0.18s ease-out;
+  }
+  .toast.ok  { border-color: #1b5e3a; color: var(--ok); }
+  .toast.err { border-color: #5a2a2a; color: var(--err); }
+  .toast.info { color: var(--text); }
+  @keyframes slidein { from { transform: translateX(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  .muted { color: var(--muted); }
+  .mono  { font-family: var(--mono); font-size: 12px; }
+  .hidden { display: none !important; }
+
+  /* ---------- modal ---------- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center; z-index: 50;
+  }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; min-width: 360px; max-width: 520px;
+  }
+  .modal h3 { margin: 0 0 12px; }
+  .modal .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1><span class="mark">●</span> Emotion · 管理面板</h1>
+  <span id="server-status" class="status-pill">未连接</span>
+  <span class="grow"></span>
+  <div class="col" style="min-width:240px">
+    <input id="server-url"  placeholder="Server URL（留空 = 当前域名）" />
+  </div>
+  <div class="col" style="min-width:240px">
+    <input id="api-key" type="password" placeholder="API Key（管理员）" />
+  </div>
+  <button class="btn secondary" id="btn-connect">连接</button>
+</header>
+
+<main class="container">
+  <nav class="sidebar" id="sidebar">
+    <div class="nav-item active" data-view="overview">   <span class="ico">◎</span> 概览 </div>
+    <div class="nav-item"        data-view="libraries">  <span class="ico">◈</span> 媒体库 </div>
+    <div class="nav-item"        data-view="scanner">    <span class="ico">↺</span> 扫描入库 </div>
+    <div class="nav-item"        data-view="tmdb">       <span class="ico">★</span> TMDB 元数据 </div>
+    <div class="nav-item"        data-view="users">      <span class="ico">⚇</span> 用户 </div>
+    <div class="nav-item"        data-view="sessions">   <span class="ico">⚏</span> 会话 </div>
+    <div class="nav-item"        data-view="usage">      <span class="ico">∑</span> 用量统计 </div>
+    <div class="nav-item"        data-view="settings">   <span class="ico">⚙</span> 连接设置 </div>
+  </nav>
+
+  <!-- ========== OVERVIEW ========== -->
+  <section class="view" id="view-overview">
+    <h2>概览</h2>
+    <p class="view-desc">服务器状态、资产计数和认证状态。</p>
+
+    <div class="card">
+      <h3>服务器</h3>
+      <div id="overview-server" class="mono muted">点击右上角“连接”加载数据。</div>
+    </div>
+
+    <div class="card">
+      <h3>资产总览</h3>
+      <div class="stat-grid" id="overview-counts">
+        <div class="stat"><div class="k">电影</div>     <div class="v" data-k="MovieCount">-</div></div>
+        <div class="stat"><div class="k">剧集</div>     <div class="v" data-k="SeriesCount">-</div></div>
+        <div class="stat"><div class="k">集数</div>     <div class="v" data-k="EpisodeCount">-</div></div>
+        <div class="stat"><div class="k">媒体库</div>   <div class="v" id="stat-libraries">-</div></div>
+        <div class="stat"><div class="k">用户</div>     <div class="v" id="stat-users">-</div></div>
+        <div class="stat"><div class="k">活动会话</div> <div class="v" id="stat-sessions">-</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== LIBRARIES ========== -->
+  <section class="view hidden" id="view-libraries">
+    <h2>媒体库</h2>
+    <p class="view-desc">创建、删除媒体库。默认角色：<span class="mono">movie</span> 或 <span class="mono">tv</span>。</p>
+
+    <div class="card">
+      <h3>新建媒体库</h3>
+      <div class="row">
+        <div class="col grow"><label>名称</label>
+          <input id="lib-new-name" placeholder="例如: 电影" />
+        </div>
+        <div class="col"><label>默认类型</label>
+          <select id="lib-new-role">
+            <option value="">(不指定)</option>
+            <option value="movie">movie</option>
+            <option value="tv">tv</option>
+          </select>
+        </div>
+        <button class="btn" id="btn-lib-create">创建</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>媒体库列表</h3>
+      <table class="data">
+        <thead><tr>
+          <th>ID</th><th>名称</th><th>角色</th><th>创建时间</th><th></th>
+        </tr></thead>
+        <tbody id="libs-tbody">
+          <tr><td class="empty" colspan="5">未连接</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========== SCANNER ========== -->
+  <section class="view hidden" id="view-scanner">
+    <h2>扫描入库</h2>
+    <p class="view-desc">
+      从容器/服务器里的目录导入资源。支持 NFO 元数据和 STRM 直链文件。
+      所有路径必须是 <b>服务器视角</b>的路径（若用 Docker，需与 <span class="mono">docker-compose.yml</span> 里的挂载匹配）。
+    </p>
+
+    <div class="card">
+      <h3>扫描参数</h3>
+      <div class="row">
+        <div class="col grow"><label>媒体库</label>
+          <select id="scan-library"><option value="">(先连接)</option></select>
+        </div>
+        <div class="col grow"><label>扫描根路径</label>
+          <input id="scan-root" placeholder="例如: /data/movies" />
+        </div>
+        <div class="col"><label>默认类型</label>
+          <select id="scan-default-type">
+            <option value="">(自动)</option>
+            <option value="movie">movie</option>
+            <option value="tv">tv</option>
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="col"><label>TMDB 抓取</label>
+          <select id="scan-scrape">
+            <option value="">(默认，随服务端配置)</option>
+            <option value="on">开启</option>
+            <option value="off">关闭</option>
+            <option value="force">强制重抓</option>
+          </select>
+        </div>
+        <div class="col checkbox" style="align-self:center">
+          <input type="checkbox" id="scan-follow"/><label for="scan-follow">跟随符号链接</label>
+        </div>
+        <div class="col checkbox" style="align-self:center">
+          <input type="checkbox" id="scan-dry"/><label for="scan-dry">演练（不写库）</label>
+        </div>
+        <button class="btn" id="btn-scan-run">开始扫描</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>扫描结果</h3>
+      <pre class="output empty" id="scan-output">暂无输出</pre>
+    </div>
+  </section>
+
+  <!-- ========== TMDB ========== -->
+  <section class="view hidden" id="view-tmdb">
+    <h2>TMDB 元数据</h2>
+    <p class="view-desc">
+      需要在服务端 <span class="mono">.env</span> 里设置 <span class="mono">TMDB_API_KEY</span>。
+      语言配置在 <span class="mono">TMDB_LANGUAGE</span>（默认 <span class="mono">zh-CN</span>）。
+    </p>
+
+    <div class="card">
+      <h3>刷新单条</h3>
+      <div class="row">
+        <div class="col grow"><label>video_list 主键 ID</label>
+          <input id="tmdb-one-id" type="number" min="1" placeholder="如: 42" />
+        </div>
+        <div class="col checkbox" style="align-self:center">
+          <input type="checkbox" id="tmdb-one-force"/><label for="tmdb-one-force">强制重抓（覆盖已有字段）</label>
+        </div>
+        <button class="btn" id="btn-tmdb-one">刷新</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>批量补全缺失元数据</h3>
+      <div class="row">
+        <div class="col"><label>最多刷新数量</label>
+          <input id="tmdb-all-max" type="number" min="1" value="200" />
+        </div>
+        <div class="col checkbox" style="align-self:center">
+          <input type="checkbox" id="tmdb-all-force"/><label for="tmdb-all-force">强制重抓所有（含已有元数据的）</label>
+        </div>
+        <button class="btn" id="btn-tmdb-all">开始批量刷新</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>结果</h3>
+      <pre class="output empty" id="tmdb-output">暂无输出</pre>
+    </div>
+  </section>
+
+  <!-- ========== USERS ========== -->
+  <section class="view hidden" id="view-users">
+    <h2>用户</h2>
+    <p class="view-desc">新建 / 删除用户、重置密码、切换管理员和禁用状态。</p>
+
+    <div class="card">
+      <h3>新建用户</h3>
+      <div class="row">
+        <div class="col grow"><label>用户名</label>
+          <input id="user-new-name" placeholder="username" />
+        </div>
+        <div class="col grow"><label>初始密码（可留空）</label>
+          <input id="user-new-pw" type="password" />
+        </div>
+        <button class="btn" id="btn-user-create">创建</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>用户列表</h3>
+      <div class="row" style="margin-bottom:10px">
+        <div class="col grow"><input id="user-search" placeholder="按用户名前缀搜索..." /></div>
+        <button class="btn secondary" id="btn-user-reload">刷新</button>
+      </div>
+      <table class="data">
+        <thead><tr>
+          <th>ID</th><th>名称</th><th>管理员</th><th>禁用</th><th>下载</th><th></th>
+        </tr></thead>
+        <tbody id="users-tbody">
+          <tr><td class="empty" colspan="6">未连接</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========== SESSIONS ========== -->
+  <section class="view hidden" id="view-sessions">
+    <h2>会话</h2>
+    <p class="view-desc">当前活动的客户端会话。可强制下线或推送消息。</p>
+    <div class="card">
+      <div class="row" style="justify-content:flex-end;margin-bottom:10px">
+        <button class="btn secondary" id="btn-sess-reload">刷新</button>
+      </div>
+      <table class="data">
+        <thead><tr>
+          <th>会话 ID</th><th>用户</th><th>客户端</th><th>设备</th><th>最近活动</th><th></th>
+        </tr></thead>
+        <tbody id="sess-tbody">
+          <tr><td class="empty" colspan="6">未连接</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========== USAGE ========== -->
+  <section class="view hidden" id="view-usage">
+    <h2>用量统计</h2>
+    <p class="view-desc">最近 7 天的播放时长排行（仅在 <span class="mono">playback_activity</span> 表有数据时生效）。</p>
+
+    <div class="card">
+      <div class="row" style="justify-content:flex-end">
+        <button class="btn secondary" id="btn-usage-reload">刷新</button>
+      </div>
+      <table class="data">
+        <thead><tr>
+          <th>#</th><th>用户 ID</th><th>观看时长（秒）</th>
+        </tr></thead>
+        <tbody id="usage-tbody">
+          <tr><td class="empty" colspan="3">未连接</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ========== SETTINGS ========== -->
+  <section class="view hidden" id="view-settings">
+    <h2>连接设置</h2>
+    <p class="view-desc">连接信息保存在浏览器本地，<b>从不上传</b>。登出即可清除。</p>
+
+    <div class="card">
+      <h3>当前配置</h3>
+      <div class="row">
+        <div class="col grow"><label>Server URL</label>
+          <input id="cfg-url" />
+        </div>
+        <div class="col grow"><label>API Key</label>
+          <input id="cfg-key" type="password" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="btn-cfg-save">保存 &amp; 重连</button>
+        <button class="btn danger" id="btn-cfg-forget">登出并清除</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>使用说明</h3>
+      <ul class="muted" style="line-height:1.8">
+        <li>API Key 就是 <span class="mono">.env</span> 中的 <span class="mono">API_KEY</span>。</li>
+        <li>所有请求都会带上 <span class="mono">?api_key=</span> 参数；HTTPS 可防止中间人。</li>
+        <li>本面板只调用已有的 REST API，不会绕过权限校验。</li>
+        <li>页面不依赖任何外部 CDN，支持纯内网部署。</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<div id="toast-box"></div>
+
+<!-- User edit modal -->
+<div id="user-modal" class="modal-backdrop hidden">
+  <div class="modal">
+    <h3>编辑用户 <span id="um-name" class="muted"></span></h3>
+    <input type="hidden" id="um-id" />
+
+    <div class="row">
+      <div class="col grow"><label>新密码（留空 = 不变）</label>
+        <input type="password" id="um-pw" />
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div class="col checkbox"><input type="checkbox" id="um-admin"/><label for="um-admin">管理员</label></div>
+      <div class="col checkbox"><input type="checkbox" id="um-disable"/><label for="um-disable">禁用账号</label></div>
+      <div class="col checkbox"><input type="checkbox" id="um-download"/><label for="um-download">允许下载</label></div>
+    </div>
+
+    <div class="foot">
+      <button class="btn secondary" id="um-cancel">取消</button>
+      <button class="btn" id="um-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Emotion admin UI — vanilla JS, no dependencies.
+// ============================================================
+
+const LS_KEY = "emotion.admin.config.v1";
+
+const state = {
+  url: "",       // e.g. http://host:8096  (empty = same origin)
+  key: "",
+  libs: [],      // [{id, name, role, ...}]
+  users: [],     // [{id, name, is_admin, is_disabled, is_can_download}]
+  counts: null,
+  sessions: [],
+};
+
+// ------------------ storage ------------------
+function loadCfg() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+function saveCfg() {
+  localStorage.setItem(LS_KEY, JSON.stringify({ url: state.url, key: state.key }));
+}
+function forgetCfg() {
+  localStorage.removeItem(LS_KEY);
+  state.url = ""; state.key = "";
+  $("#server-url").value = "";
+  $("#api-key").value = "";
+  $("#cfg-url").value = "";
+  $("#cfg-key").value = "";
+  setStatus("disconnected");
+  clearAll();
+  toast("已登出", "info");
+}
+
+// ------------------ tiny dom helpers ------------------
+function $(sel, root = document) { return root.querySelector(sel); }
+function $$(sel, root = document) { return Array.from(root.querySelectorAll(sel)); }
+
+// ------------------ toast ------------------
+function toast(msg, kind = "info", ms = 3000) {
+  const el = document.createElement("div");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  $("#toast-box").appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = 0;
+    el.style.transition = "opacity 0.3s";
+    setTimeout(() => el.remove(), 300);
+  }, ms);
+}
+
+// ------------------ api ------------------
+function baseURL() {
+  // Empty = use same origin as dashboard.
+  return (state.url || "").replace(/\/$/, "");
+}
+function withKey(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  return baseURL() + path + sep + "api_key=" + encodeURIComponent(state.key);
+}
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(withKey(path), opts);
+  const ctype = resp.headers.get("content-type") || "";
+  let data;
+  if (ctype.includes("application/json")) {
+    data = await resp.json().catch(() => null);
+  } else {
+    data = await resp.text();
+  }
+  if (!resp.ok) {
+    const msg = typeof data === "string" ? data : (data && data.message) || resp.statusText;
+    const err = new Error("HTTP " + resp.status + ": " + msg);
+    err.status = resp.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+// ------------------ status / navigation ------------------
+function setStatus(kind, label) {
+  const el = $("#server-status");
+  el.classList.remove("ok", "err");
+  if (kind === "ok") { el.classList.add("ok");  el.textContent = label || "已连接"; }
+  else if (kind === "err") { el.classList.add("err"); el.textContent = label || "连接失败"; }
+  else { el.textContent = label || "未连接"; }
+}
+function showView(name) {
+  $$(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === name));
+  $$(".view").forEach(v => v.classList.toggle("hidden", v.id !== "view-" + name));
+}
+function clearAll() {
+  $("#overview-server").textContent = "未连接";
+  $$("#overview-counts .v").forEach(v => v.textContent = "-");
+  $("#stat-libraries").textContent = "-";
+  $("#stat-users").textContent = "-";
+  $("#stat-sessions").textContent = "-";
+  $("#libs-tbody").innerHTML = emptyRow(5);
+  $("#users-tbody").innerHTML = emptyRow(6);
+  $("#sess-tbody").innerHTML = emptyRow(6);
+  $("#usage-tbody").innerHTML = emptyRow(3);
+}
+function emptyRow(cols, msg = "未连接") {
+  return `<tr><td class="empty" colspan="${cols}">${msg}</td></tr>`;
+}
+function escHTML(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[c]));
+}
+
+// ------------------ connection ------------------
+async function connect() {
+  state.url = $("#server-url").value.trim();
+  state.key = $("#api-key").value.trim();
+  $("#cfg-url").value = state.url;
+  $("#cfg-key").value = state.key;
+  if (!state.key) {
+    toast("请填写 API Key", "err");
+    setStatus("disconnected", "未连接");
+    return;
+  }
+  setStatus("ok", "连接中…");
+  try {
+    const info = await api("GET", "/System/Info");
+    saveCfg();
+    setStatus("ok", info.ServerName || "已连接");
+    renderServerOverview(info);
+    await Promise.allSettled([
+      loadCounts(),
+      loadLibraries(),
+      loadUsers(),
+      loadSessions(),
+    ]);
+    toast("连接成功", "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus("err", "连接失败");
+    toast(err.message, "err", 5000);
+    $("#overview-server").textContent = err.message;
+  }
+}
+
+// ------------------ overview ------------------
+function renderServerOverview(info) {
+  const kv = [
+    ["服务器名",     info.ServerName],
+    ["版本",         info.Version],
+    ["ServerId",     info.Id],
+    ["OS",           info.OperatingSystemDisplayName],
+    ["HTTP 端口",    info.HttpServerPortNumber],
+    ["本地地址",     info.LocalAddress],
+  ];
+  $("#overview-server").innerHTML = kv.map(([k, v]) =>
+    `<div><span class="muted">${escHTML(k)}</span>: ${escHTML(v ?? "-")}</div>`
+  ).join("");
+}
+async function loadCounts() {
+  try {
+    const c = await api("GET", "/Items/Counts");
+    state.counts = c;
+    $$("#overview-counts .v").forEach(v => {
+      const k = v.dataset.k;
+      if (k && c[k] != null) v.textContent = c[k];
+    });
+  } catch (e) { /* silent */ }
+}
+
+// ------------------ libraries ------------------
+async function loadLibraries() {
+  try {
+    const libs = await api("GET", "/admin/libraries");
+    state.libs = Array.isArray(libs) ? libs : [];
+    renderLibraries();
+    populateScanLibSelect();
+    $("#stat-libraries").textContent = state.libs.length;
+  } catch (e) {
+    $("#libs-tbody").innerHTML = emptyRow(5, "加载失败: " + escHTML(e.message));
+  }
+}
+function renderLibraries() {
+  const tb = $("#libs-tbody");
+  if (state.libs.length === 0) {
+    tb.innerHTML = emptyRow(5, "暂无媒体库");
+    return;
+  }
+  tb.innerHTML = state.libs.map(l => `
+    <tr>
+      <td class="num">${l.id}</td>
+      <td>${escHTML(l.name)}</td>
+      <td>${l.role ? `<span class="tag">${escHTML(l.role)}</span>` : "<span class='muted'>-</span>"}</td>
+      <td class="muted">${escHTML(l.created_at || "-")}</td>
+      <td class="actions">
+        <button class="btn sm danger" data-act="lib-del" data-id="${l.id}">删除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+function populateScanLibSelect() {
+  const sel = $("#scan-library");
+  sel.innerHTML = state.libs.length
+    ? state.libs.map(l => `<option value="${l.id}">${escHTML(l.name)} (#${l.id})</option>`).join("")
+    : `<option value="">(请先创建媒体库)</option>`;
+}
+async function createLibrary() {
+  const name = $("#lib-new-name").value.trim();
+  const role = $("#lib-new-role").value;
+  if (!name) { toast("请填写名称", "err"); return; }
+  try {
+    await api("POST", "/admin/libraries", { name, role });
+    $("#lib-new-name").value = "";
+    toast("已创建", "ok");
+    await loadLibraries();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function deleteLibrary(id) {
+  if (!confirm("确认删除媒体库 #" + id + "？")) return;
+  try {
+    await api("DELETE", "/admin/libraries/" + id);
+    toast("已删除", "ok");
+    await loadLibraries();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+// ------------------ scanner ------------------
+async function runScan() {
+  const libID  = parseInt($("#scan-library").value, 10);
+  const root   = $("#scan-root").value.trim();
+  const dType  = $("#scan-default-type").value;
+  const scrape = $("#scan-scrape").value;
+  const follow = $("#scan-follow").checked;
+  const dry    = $("#scan-dry").checked;
+  if (!libID) { toast("请选择媒体库", "err"); return; }
+  if (!root)  { toast("请填写扫描路径", "err"); return; }
+
+  const btn = $("#btn-scan-run");
+  btn.disabled = true; btn.textContent = "扫描中…";
+  const out = $("#scan-output");
+  out.classList.remove("empty");
+  out.textContent = "发起扫描…";
+  try {
+    const res = await api("POST", "/admin/library/scan", {
+      library_id: libID, root,
+      default_type: dType || undefined,
+      scrape: scrape || undefined,
+      follow_symlinks: follow, dry_run: dry,
+    });
+    out.textContent = JSON.stringify(res, null, 2);
+    toast("扫描完成", "ok");
+    await loadCounts();
+  } catch (e) {
+    out.textContent = "错误: " + e.message;
+    toast(e.message, "err", 6000);
+  } finally {
+    btn.disabled = false; btn.textContent = "开始扫描";
+  }
+}
+
+// ------------------ tmdb ------------------
+async function tmdbRefreshOne() {
+  const id = parseInt($("#tmdb-one-id").value, 10);
+  if (!id) { toast("请填写 video_list ID", "err"); return; }
+  const force = $("#tmdb-one-force").checked;
+  const btn = $("#btn-tmdb-one");
+  btn.disabled = true;
+  const out = $("#tmdb-output");
+  out.classList.remove("empty");
+  out.textContent = "刷新中…";
+  try {
+    const res = await api("POST", "/admin/items/" + id + "/tmdb/refresh", { force });
+    out.textContent = JSON.stringify(res, null, 2);
+    toast("已刷新", "ok");
+  } catch (e) {
+    out.textContent = "错误: " + e.message;
+    toast(e.message, "err", 6000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function tmdbRefreshAll() {
+  const max = parseInt($("#tmdb-all-max").value, 10) || 200;
+  const force = $("#tmdb-all-force").checked;
+  if (!confirm(`即将批量刷新最多 ${max} 条${force ? "（强制重抓）" : ""}，确认？`)) return;
+  const btn = $("#btn-tmdb-all");
+  btn.disabled = true;
+  const out = $("#tmdb-output");
+  out.classList.remove("empty");
+  out.textContent = "刷新中…（请耐心等待）";
+  try {
+    const res = await api("POST", "/admin/tmdb/refresh-all", { max, force });
+    out.textContent = JSON.stringify(res, null, 2);
+    toast("批量刷新完成", "ok");
+  } catch (e) {
+    out.textContent = "错误: " + e.message;
+    toast(e.message, "err", 6000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ------------------ users ------------------
+async function loadUsers(search) {
+  try {
+    const path = search
+      ? `/Users/Query?namestartswithorgreater=${encodeURIComponent(search)}`
+      : "/Users";
+    const list = await api("GET", path);
+    const arr = Array.isArray(list) ? list : (list.Items || []);
+    state.users = arr.map(u => ({
+      id:          u.Id,
+      name:        u.Name,
+      is_admin:    !!(u.Policy && u.Policy.IsAdministrator),
+      is_disabled: !!(u.Policy && u.Policy.IsDisabled),
+      is_can_download: !!(u.Policy && u.Policy.EnableContentDownloading),
+    }));
+    renderUsers();
+    $("#stat-users").textContent = state.users.length;
+  } catch (e) {
+    $("#users-tbody").innerHTML = emptyRow(6, "加载失败: " + escHTML(e.message));
+  }
+}
+function renderUsers() {
+  const tb = $("#users-tbody");
+  if (state.users.length === 0) {
+    tb.innerHTML = emptyRow(6, "无用户");
+    return;
+  }
+  tb.innerHTML = state.users.map(u => `
+    <tr>
+      <td class="num">${escHTML(u.id)}</td>
+      <td>${escHTML(u.name)}</td>
+      <td>${u.is_admin    ? "<span class='tag ok'>管理员</span>" : "<span class='muted'>-</span>"}</td>
+      <td>${u.is_disabled ? "<span class='tag err'>已禁用</span>" : "<span class='tag ok'>正常</span>"}</td>
+      <td>${u.is_can_download ? "<span class='tag ok'>允许</span>" : "<span class='muted'>-</span>"}</td>
+      <td class="actions">
+        <button class="btn sm secondary" data-act="user-edit" data-id="${escHTML(u.id)}">编辑</button>
+        <button class="btn sm danger"    data-act="user-del"  data-id="${escHTML(u.id)}">删除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+async function createUser() {
+  const name = $("#user-new-name").value.trim();
+  const pw   = $("#user-new-pw").value;
+  if (!name) { toast("请填写用户名", "err"); return; }
+  try {
+    await api("POST", "/Users/New", { Name: name, Password: pw });
+    $("#user-new-name").value = "";
+    $("#user-new-pw").value = "";
+    toast("已创建", "ok");
+    await loadUsers();
+  } catch (e) { toast(e.message, "err"); }
+}
+async function deleteUser(id) {
+  if (!confirm("确认删除用户 " + id + "？此操作会同时撤销其所有会话。")) return;
+  try {
+    await api("DELETE", "/Users/" + id);
+    toast("已删除", "ok");
+    await loadUsers();
+  } catch (e) { toast(e.message, "err"); }
+}
+function openUserModal(id) {
+  const u = state.users.find(x => String(x.id) === String(id));
+  if (!u) return;
+  $("#um-id").value = u.id;
+  $("#um-name").textContent = "#" + u.id + " " + u.name;
+  $("#um-pw").value = "";
+  $("#um-admin").checked    = u.is_admin;
+  $("#um-disable").checked  = u.is_disabled;
+  $("#um-download").checked = u.is_can_download;
+  $("#user-modal").classList.remove("hidden");
+}
+function closeUserModal() { $("#user-modal").classList.add("hidden"); }
+async function saveUserModal() {
+  const id       = $("#um-id").value;
+  const pw       = $("#um-pw").value;
+  const isAdmin  = $("#um-admin").checked;
+  const disabled = $("#um-disable").checked;
+  const download = $("#um-download").checked;
+  try {
+    await api("POST", "/Users/" + id + "/Policy", {
+      IsAdministrator: isAdmin,
+      IsDisabled: disabled,
+      EnableContentDownloading: download,
+      EnableAllFolders: true,
+      EnabledFolders: [],
+      BlockedMediaFolders: [],
+    });
+    if (pw) {
+      await api("POST", "/Users/" + id + "/Password", { NewPw: pw, ResetPassword: false });
+    }
+    toast("已保存", "ok");
+    closeUserModal();
+    await loadUsers();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+// ------------------ sessions ------------------
+async function loadSessions() {
+  try {
+    const arr = await api("GET", "/Sessions");
+    state.sessions = Array.isArray(arr) ? arr : [];
+    renderSessions();
+    $("#stat-sessions").textContent = state.sessions.length;
+  } catch (e) {
+    $("#sess-tbody").innerHTML = emptyRow(6, "加载失败: " + escHTML(e.message));
+  }
+}
+function renderSessions() {
+  const tb = $("#sess-tbody");
+  if (state.sessions.length === 0) {
+    tb.innerHTML = emptyRow(6, "无活动会话");
+    return;
+  }
+  tb.innerHTML = state.sessions.map(s => `
+    <tr>
+      <td class="mono">${escHTML(s.Id)}</td>
+      <td>${escHTML(s.UserName || "-")} ${s.UserId ? `<span class="muted">#${escHTML(s.UserId)}</span>` : ""}</td>
+      <td>${escHTML(s.Client || "-")} <span class="muted">${escHTML(s.ApplicationVersion || "")}</span></td>
+      <td>${escHTML(s.DeviceName || "-")}</td>
+      <td class="muted">${escHTML(s.LastActivityDate || "-")}</td>
+      <td class="actions">
+        <button class="btn sm secondary" data-act="sess-msg"  data-id="${escHTML(s.Id)}">发送消息</button>
+        <button class="btn sm danger"    data-act="sess-stop" data-id="${escHTML(s.Id)}">强制下线</button>
+      </td>
+    </tr>
+  `).join("");
+}
+async function sessionMessage(id) {
+  const text = prompt("要发送的消息：");
+  if (!text) return;
+  try {
+    await api("POST", "/Sessions/" + id + "/Message", { Header: "Emotion", Text: text });
+    toast("已发送", "ok");
+  } catch (e) { toast(e.message, "err"); }
+}
+async function sessionStop(id) {
+  if (!confirm("强制终止会话 " + id + "？")) return;
+  try {
+    await api("POST", "/Sessions/" + id + "/Playing/Stop");
+    toast("已终止", "ok");
+    await loadSessions();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+// ------------------ usage stats ------------------
+async function loadUsage() {
+  try {
+    const res = await api("POST", "/user_usage_stats/submit_custom_query", {
+      CustomQueryString:
+        "SELECT UserId, SUM(PlayDuration - PauseDuration) AS WatchTime " +
+        "FROM PlaybackActivity GROUP BY UserId ORDER BY WatchTime DESC",
+      ReplaceUserId: false,
+    });
+    const rows = (res && res.results) || [];
+    const tb = $("#usage-tbody");
+    if (rows.length === 0) {
+      tb.innerHTML = emptyRow(3, "最近 7 天无播放数据");
+      return;
+    }
+    tb.innerHTML = rows.map((r, i) => `
+      <tr>
+        <td class="num">${i + 1}</td>
+        <td class="mono">${escHTML(r.UserId)}</td>
+        <td class="num">${escHTML(r.WatchTime)}</td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    $("#usage-tbody").innerHTML = emptyRow(3, "加载失败: " + escHTML(e.message));
+  }
+}
+
+// ------------------ event wiring ------------------
+function bindUI() {
+  // topbar
+  $("#btn-connect").onclick = connect;
+  $("#api-key").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+  $("#server-url").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+
+  // sidebar
+  $$("#sidebar .nav-item").forEach(n => {
+    n.onclick = () => {
+      showView(n.dataset.view);
+      // lazy refresh on view switch
+      if (state.key) {
+        if (n.dataset.view === "usage")    loadUsage();
+        if (n.dataset.view === "sessions") loadSessions();
+        if (n.dataset.view === "users")    loadUsers();
+        if (n.dataset.view === "libraries") loadLibraries();
+      }
+    };
+  });
+
+  // libraries
+  $("#btn-lib-create").onclick = createLibrary;
+  $("#libs-tbody").addEventListener("click", e => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    if (btn.dataset.act === "lib-del") deleteLibrary(btn.dataset.id);
+  });
+
+  // scanner
+  $("#btn-scan-run").onclick = runScan;
+
+  // tmdb
+  $("#btn-tmdb-one").onclick = tmdbRefreshOne;
+  $("#btn-tmdb-all").onclick = tmdbRefreshAll;
+
+  // users
+  $("#btn-user-create").onclick = createUser;
+  $("#btn-user-reload").onclick = () => loadUsers($("#user-search").value.trim());
+  $("#user-search").addEventListener("keydown", e => {
+    if (e.key === "Enter") loadUsers(e.target.value.trim());
+  });
+  $("#users-tbody").addEventListener("click", e => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    if (btn.dataset.act === "user-edit") openUserModal(btn.dataset.id);
+    if (btn.dataset.act === "user-del")  deleteUser(btn.dataset.id);
+  });
+  $("#um-cancel").onclick = closeUserModal;
+  $("#um-save").onclick   = saveUserModal;
+  $("#user-modal").addEventListener("click", e => {
+    if (e.target === $("#user-modal")) closeUserModal();
+  });
+
+  // sessions
+  $("#btn-sess-reload").onclick = loadSessions;
+  $("#sess-tbody").addEventListener("click", e => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    if (btn.dataset.act === "sess-msg")  sessionMessage(btn.dataset.id);
+    if (btn.dataset.act === "sess-stop") sessionStop(btn.dataset.id);
+  });
+
+  // usage
+  $("#btn-usage-reload").onclick = loadUsage;
+
+  // settings
+  $("#btn-cfg-save").onclick = () => {
+    $("#server-url").value = $("#cfg-url").value;
+    $("#api-key").value    = $("#cfg-key").value;
+    connect();
+  };
+  $("#btn-cfg-forget").onclick = forgetCfg;
+}
+
+// ------------------ init ------------------
+(function init() {
+  bindUI();
+  clearAll();
+  const cfg = loadCfg();
+  if (cfg) {
+    state.url = cfg.url || "";
+    state.key = cfg.key || "";
+    $("#server-url").value = state.url;
+    $("#api-key").value    = state.key;
+    $("#cfg-url").value    = state.url;
+    $("#cfg-key").value    = state.key;
+    connect(); // auto-reconnect
+  }
+})();
+</script>
+
+</body>
+</html>
