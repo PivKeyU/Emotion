@@ -9,7 +9,7 @@ services:
     # Mount your media root here. The path inside the container (/data) is what
     # you'll pass to POST /admin/library/scan as "root".
     volumes:
-      - ./media:/data:ro
+      - ./data:/data:ro
     environment:
       APP_NAME: emotion
       APP_LOG_LEVEL: info
