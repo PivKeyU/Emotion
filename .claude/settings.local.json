@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git config *)",
+      "Bash(git push *)",
+      "Bash(git fetch *)",
+      "Bash(git reset *)",
+      "Bash(gh --version)",
+      "Bash(where gh *)",
+      "Bash(which gh *)",
+      "Bash(winget install *)",
+      "Bash(\"/c/Program Files/GitHub CLI/gh.exe\" auth status)",
+      "Bash(export PATH=\"$PATH:/c/Program Files/GitHub CLI\")",
+      "Bash(gh auth *)",
+      "Bash(gh api *)",
+      "Bash(git checkout *)",
+      "Bash(git filter-branch -f --env-filter ' *)",
+      "Bash(git branch *)",
+      "Bash(gh pr *)",
+      "Bash(git rebase *)"
+    ]
+  }
+}
