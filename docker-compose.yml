@@ -1,0 +1,57 @@
+services:
+  next-emby:
+    build: .
+    image: next-emby:latest
+    container_name: next-emby
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    environment:
+      APP_NAME: next-emby
+      APP_LOG_LEVEL: info
+
+      DB_DRIVER: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: next_emby
+      DB_USERNAME: next_emby
+      DB_PASSWORD: next_emby_pwd
+
+      VALKEY_HOST: valkey
+      VALKEY_PORT: 6379
+
+      # API_KEY is the admin key used by Sakura_embyboss and other tools.
+      API_KEY: change-me-please
+
+      EMBY_VERSION: 4.8.10.0
+      EMBY_ID: next-emby
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: next_emby
+      MYSQL_USER: next_emby
+      MYSQL_PASSWORD: next_emby_pwd
+      MYSQL_ROOT_PASSWORD: root_pwd
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:7-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+
+volumes:
+  mysql-data:

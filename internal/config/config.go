@@ -1,0 +1,108 @@
+// Package config loads and holds all runtime configuration from environment variables.
+// Mirrors emya (src/env.d.ts) as the reference implementation.
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Config holds all application configuration.
+type Config struct {
+	AppName       string
+	AppAuthNumber int
+	AppLogLevel   string
+
+	ServerHost string
+	ServerPort int
+
+	DBDriver       string
+	DBHost         string
+	DBPort         int
+	DBDatabase     string
+	DBUsername     string
+	DBPassword     string
+	DBMaxOpenConns int
+
+	ValkeyHost     string
+	ValkeyPort     int
+	ValkeyUsername string
+	ValkeyPassword string
+
+	APIKey      string
+	APIExternal string
+
+	SearchDefaultList string
+
+	EmbyVersion          string
+	EmbyID               string
+	EmbyExtServerDomains string
+}
+
+// Load reads configuration from environment variables.
+func Load() *Config {
+	return &Config{
+		AppName:       getEnv("APP_NAME", "next-emby"),
+		AppAuthNumber: getEnvInt("APP_AUTH_NUMBER", 10),
+		AppLogLevel:   getEnv("APP_LOG_LEVEL", "info"),
+
+		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort: getEnvInt("SERVER_PORT", 8096),
+
+		DBDriver:       getEnv("DB_DRIVER", "mysql"),
+		DBHost:         getEnv("DB_HOST", "127.0.0.1"),
+		DBPort:         getEnvInt("DB_PORT", 3306),
+		DBDatabase:     getEnv("DB_DATABASE", "next_emby"),
+		DBUsername:     getEnv("DB_USERNAME", "root"),
+		DBPassword:     getEnv("DB_PASSWORD", ""),
+		DBMaxOpenConns: getEnvInt("DB_MAX_OPEN_CONNS", 20),
+
+		ValkeyHost:     getEnv("VALKEY_HOST", ""),
+		ValkeyPort:     getEnvInt("VALKEY_PORT", 6379),
+		ValkeyUsername: getEnv("VALKEY_USERNAME", ""),
+		ValkeyPassword: getEnv("VALKEY_PASSWORD", ""),
+
+		APIKey:      getEnv("API_KEY", ""),
+		APIExternal: getEnv("API_EXTERNAL", ""),
+
+		SearchDefaultList: getEnv("SEARCH_DEFAULT_LIST", `{"欢迎来到 next-emby":1}`),
+
+		EmbyVersion:          getEnv("EMBY_VERSION", "4.8.10.0"),
+		EmbyID:               getEnv("EMBY_ID", "next-emby"),
+		EmbyExtServerDomains: getEnv("EMBY_EXT_SERVER_DOMAINS", ""),
+	}
+}
+
+// DSN returns the MySQL Data Source Name for this configuration.
+func (c *Config) DSN() string {
+	return fmt.Sprintf(
+		"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci&loc=Local&multiStatements=true",
+		c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBDatabase,
+	)
+}
+
+// ValkeyAddr returns an address usable for go-redis, or empty if cache is disabled.
+func (c *Config) ValkeyAddr() string {
+	if c.ValkeyHost == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", c.ValkeyHost, c.ValkeyPort)
+}
+
+func getEnv(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}

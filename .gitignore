@@ -1,0 +1,24 @@
+# binaries
+/bin/
+/next-emby
+/next-emby.exe
+
+# local env
+.env
+.env.local
+
+# logs
+/logs/
+*.log
+
+# go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
