@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestParseSTRM_PivKeyURedirect verifies that Next-Emby correctly handles the
+// TestParseSTRM_PivKeyURedirect verifies that Emotion correctly handles the
 // real-world strm redirect URLs served by strm.pivkeyu.com.
 //
 // Properties we check:

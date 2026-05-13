@@ -1,7 +1,7 @@
 # binaries
 /bin/
-/next-emby
-/next-emby.exe
+/emotion
+/emotion.exe
 
 # local env
 .env

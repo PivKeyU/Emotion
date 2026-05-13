@@ -12,10 +12,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/importer"
-	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
-	"github.com/PivKeyU/Next-Emby/internal/tmdb"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/importer"
+	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
+	"github.com/PivKeyU/Emotion/internal/tmdb"
 )
 
 // Admin serves /admin/* endpoints for manual library management.

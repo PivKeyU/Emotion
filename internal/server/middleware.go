@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
+	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
 // recoverer catches panics so a single bad handler can't crash the server.

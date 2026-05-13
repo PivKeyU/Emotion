@@ -1,4 +1,4 @@
-// Package main is the Next-Emby server entrypoint.
+// Package main is the Emotion server entrypoint.
 package main
 
 import (
@@ -13,11 +13,11 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/PivKeyU/Next-Emby/internal/cache"
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/logger"
-	"github.com/PivKeyU/Next-Emby/internal/server"
+	"github.com/PivKeyU/Emotion/internal/cache"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/logger"
+	"github.com/PivKeyU/Emotion/internal/server"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.AppLogLevel)
 
-	log.Info("starting next-emby", "name", cfg.AppName, "version", cfg.EmbyVersion)
+	log.Info("starting emotion", "name", cfg.AppName, "version", cfg.EmbyVersion)
 
 	database, err := db.Open(cfg)
 	if err != nil {
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	go func() {
-		log.Info("next-emby running", "addr", addr)
+		log.Info("emotion running", "addr", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("server failed", "err", err)
 			os.Exit(1)

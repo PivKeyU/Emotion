@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
 )
 
 // Transform builds Emby-shaped JSON objects from database rows.
@@ -139,7 +139,7 @@ func (t *Transform) User(ctx context.Context, userID int64) (map[string]any, err
 			"InvalidLoginAttemptCount":             0,
 			"EnablePublicSharing":                  false,
 			"RemoteClientBitrateLimit":             0,
-			"AuthenticationProviderId":             "next-emby",
+			"AuthenticationProviderId":             "emotion",
 			"ExcludedSubFolders":                   []any{},
 			"SimultaneousStreamLimit":              0,
 			"EnabledDevices":                       []any{},

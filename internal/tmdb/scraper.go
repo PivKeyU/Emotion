@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
 )
 
 // Scraper fills in missing metadata on existing video_list / video_season /

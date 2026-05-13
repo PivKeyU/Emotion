@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/db"
+	"github.com/PivKeyU/Emotion/internal/db"
 )
 
 // Options tune an import run.

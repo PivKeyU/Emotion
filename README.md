@@ -1,9 +1,9 @@
-# Next-Emby
+# Emotion
 
 > Emby 兼容的媒体 API 服务端，Go 实现
 > Based on the design of [emya (emosp/emya @dev)](https://github.com/emosp/emya) and exposing the admin surface used by [Sakura_embyboss](https://github.com/berry8838/Sakura_embyboss).
 
-Next-Emby 实现了 Emby `/emby/*` HTTP API 的一个实用子集，让任何通过 Emby API
+Emotion 实现了 Emby `/emby/*` HTTP API 的一个实用子集，让任何通过 Emby API
 连接的客户端（Fileball、Infuse、Hills、yamby、afusekt、femor 等）和管理工具
 （Sakura_embyboss 等）能直接对接。
 
@@ -23,7 +23,7 @@ Next-Emby 实现了 Emby `/emby/*` HTTP API 的一个实用子集，让任何通
 ## 目录结构
 
 ```
-cmd/next-emby/        # main 入口
+cmd/emotion/        # main 入口
 internal/
   auth/               # bcrypt 密码 + Token 生成
   cache/              # Redis/Valkey 或内存缓存
@@ -56,10 +56,10 @@ docker compose up -d --build
 ```bash
 cp .env.example .env
 # 编辑 .env 填入 DB / API_KEY
-go run ./cmd/next-emby
+go run ./cmd/emotion
 ```
 
-Next-Emby 启动时会自动执行 `internal/db/migrate.go` 里的建表 DDL，
+Emotion 启动时会自动执行 `internal/db/migrate.go` 里的建表 DDL，
 无须手动 migrate。
 
 ## 本地部署完整指南
@@ -74,8 +74,8 @@ Next-Emby 启动时会自动执行 `internal/db/migrate.go` 里的建表 DDL，
 ### 2. 克隆仓库
 
 ```bash
-git clone https://github.com/PivKeyU/Next-Emby.git
-cd Next-Emby
+git clone https://github.com/PivKeyU/Emotion.git
+cd Emotion
 ```
 
 ### 3. 准备媒体目录
@@ -83,7 +83,7 @@ cd Next-Emby
 在仓库根目录创建 `./media` 文件夹,把视频 / STRM 文件放进去:
 
 ```
-Next-Emby/
+Emotion/
 └── media/
     ├── 电影/
     │   └── 流浪地球 2 (2023) [tmdb=693134]/
@@ -119,18 +119,18 @@ TMDB_API_KEY=你的tmdb密钥
 
 ```bash
 docker compose up -d --build
-docker compose logs -f next-emby   # 观察启动日志
+docker compose logs -f emotion   # 观察启动日志
 ```
 
 看到这行就说明跑起来了:
 ```
-msg="next-emby running" addr=0.0.0.0:8096
+msg="emotion running" addr=0.0.0.0:8096
 ```
 
 健康检查:
 ```bash
 curl http://localhost:8096/emby/System/Info/Public
-# {"ServerName":"next-emby","Version":"4.8.10.0","Id":"next-emby",...}
+# {"ServerName":"emotion","Version":"4.8.10.0","Id":"emotion",...}
 ```
 
 ### 6. 创建媒体库 + 扫描入库
@@ -203,7 +203,7 @@ curl -X POST "http://localhost:8096/emby/Users/1/Policy?api_key=$API" \
 ### 9. 常见问题排查
 
 **扫描没返回任何 `touched_video_list_ids`**
-- 检查容器能否看到文件:`docker compose exec next-emby ls /data/电影`
+- 检查容器能否看到文件:`docker compose exec emotion ls /data/电影`
 - 视频文件扩展名是否在支持列表里(`.mkv .mp4 .strm .ts .avi` 等)
 
 **TMDB 返回 `skipped: no TMDB match`**
@@ -212,7 +212,7 @@ curl -X POST "http://localhost:8096/emby/Users/1/Policy?api_key=$API" \
 
 **客户端连接失败 `401 登录失效`**
 - 第一次登录时必须带 `X-Emby-Authorization` header(Emby 官方客户端会自动带)
-- Next-Emby 会拒绝没 Device-Id 的请求
+- Emotion 会拒绝没 Device-Id 的请求
 
 **播放时 403**
 - 视频文件读不到;检查 compose 卷挂载的权限
@@ -224,19 +224,19 @@ curl -X POST "http://localhost:8096/emby/Users/1/Policy?api_key=$API" \
 # 先启一个 MySQL
 docker run -d --name ne-mysql \
   -e MYSQL_ROOT_PASSWORD=rootpw \
-  -e MYSQL_DATABASE=next_emby \
-  -e MYSQL_USER=next_emby \
+  -e MYSQL_DATABASE=emotion \
+  -e MYSQL_USER=emotion \
   -e MYSQL_PASSWORD=pw \
   -p 3306:3306 \
   mysql:8 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
 
 # 改 .env:
 #   DB_HOST=127.0.0.1
-#   DB_USERNAME=next_emby
+#   DB_USERNAME=emotion
 #   DB_PASSWORD=pw
 
 # 本地跑
-go run ./cmd/next-emby
+go run ./cmd/emotion
 ```
 
 ## 重要的接口约定
@@ -277,7 +277,7 @@ go run ./cmd/next-emby
 
 ## 数据导入
 
-Next-Emby 支持**两种**入库方式:
+Emotion 支持**两种**入库方式:
 
 ### 方式 1:自动扫描(推荐)
 
@@ -419,7 +419,7 @@ https://pan.example.com/redirect?fid=abc&sign=def
 
 ## TMDB 自动刮削
 
-Next-Emby 内置了 TMDB 客户端,可以自动给入库的条目填充标题、简介、海报、背景图、首映日、时长、类型等元数据。默认语言为中文(zh-CN)。
+Emotion 内置了 TMDB 客户端,可以自动给入库的条目填充标题、简介、海报、背景图、首映日、时长、类型等元数据。默认语言为中文(zh-CN)。
 
 ### 开启方式
 
@@ -469,7 +469,7 @@ curl -X POST 'http://localhost:8096/admin/items/42/tmdb/refresh?api_key=YOUR_API
 
 ```jsonc
 {
-  "emby_url":  "http://next-emby:8096",
+  "emby_url":  "http://emotion:8096",
   "emby_api":  "<你在 .env 里配置的 API_KEY>"
 }
 ```

@@ -1,4 +1,4 @@
-module github.com/PivKeyU/Next-Emby
+module github.com/PivKeyU/Emotion
 
 go 1.24
 

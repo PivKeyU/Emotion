@@ -11,10 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/PivKeyU/Next-Emby/internal/auth"
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
+	"github.com/PivKeyU/Emotion/internal/auth"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
 // Management serves Emby admin endpoints used by Sakura_embyboss:

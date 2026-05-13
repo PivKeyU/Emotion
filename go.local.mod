@@ -6,7 +6,7 @@
 //
 // Normal users should ignore this file and use the checked-in go.mod, which
 // pulls modules from proxy.golang.org as usual.
-module github.com/PivKeyU/Next-Emby
+module github.com/PivKeyU/Emotion
 
 go 1.25.0
 

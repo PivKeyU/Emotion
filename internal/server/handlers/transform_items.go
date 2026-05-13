@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
 )
 
 // videoMediaRow holds the columns we read for building MediaSources.

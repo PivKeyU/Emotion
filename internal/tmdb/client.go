@@ -1,5 +1,5 @@
 // Package tmdb provides a minimal TMDB (The Movie Database) API v3 client
-// focused on fetching the fields Next-Emby needs for metadata backfill:
+// focused on fetching the fields Emotion needs for metadata backfill:
 // title / overview / air date / runtime / poster / backdrop / genres / ids.
 //
 // Docs: https://developer.themoviedb.org/reference/

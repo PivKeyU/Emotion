@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
 )
 
 // VideoListSearch is the search / list specification used by emya UserItems.

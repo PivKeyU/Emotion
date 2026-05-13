@@ -8,7 +8,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
+	"github.com/PivKeyU/Emotion/internal/config"
 )
 
 // Open opens the configured database and verifies connectivity.

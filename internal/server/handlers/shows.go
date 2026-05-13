@@ -10,10 +10,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
-	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
 // Shows serves /Shows/* endpoints (TV series navigation).

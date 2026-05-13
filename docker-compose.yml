@@ -1,8 +1,8 @@
 services:
-  next-emby:
+  emotion:
     build: .
-    image: next-emby:latest
-    container_name: next-emby
+    image: emotion:latest
+    container_name: emotion
     restart: unless-stopped
     ports:
       - "8096:8096"
@@ -11,15 +11,15 @@ services:
     volumes:
       - ./media:/data:ro
     environment:
-      APP_NAME: next-emby
+      APP_NAME: emotion
       APP_LOG_LEVEL: info
 
       DB_DRIVER: mysql
       DB_HOST: mysql
       DB_PORT: 3306
-      DB_DATABASE: next_emby
-      DB_USERNAME: next_emby
-      DB_PASSWORD: next_emby_pwd
+      DB_DATABASE: emotion
+      DB_USERNAME: emotion
+      DB_PASSWORD: emotion_pwd
 
       VALKEY_HOST: valkey
       VALKEY_PORT: 6379
@@ -34,7 +34,7 @@ services:
       TMDB_AUTO_SCRAPE: "true"
 
       EMBY_VERSION: 4.8.10.0
-      EMBY_ID: next-emby
+      EMBY_ID: emotion
     depends_on:
       mysql:
         condition: service_healthy
@@ -43,9 +43,9 @@ services:
     image: mysql:8
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: next_emby
-      MYSQL_USER: next_emby
-      MYSQL_PASSWORD: next_emby_pwd
+      MYSQL_DATABASE: emotion
+      MYSQL_USER: emotion
+      MYSQL_PASSWORD: emotion_pwd
       MYSQL_ROOT_PASSWORD: root_pwd
     command:
       - --character-set-server=utf8mb4

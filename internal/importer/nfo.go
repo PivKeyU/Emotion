@@ -1,4 +1,4 @@
-// Package importer parses NFO and STRM files and imports them into Next-Emby.
+// Package importer parses NFO and STRM files and imports them into Emotion.
 //
 // The NFO format follows Emby/Jellyfin/Kodi conventions. We are intentionally
 // lenient: unknown tags are ignored, and fields may appear in any order.

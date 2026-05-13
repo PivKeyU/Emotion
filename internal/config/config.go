@@ -54,7 +54,7 @@ type Config struct {
 // Load reads configuration from environment variables.
 func Load() *Config {
 	return &Config{
-		AppName:       getEnv("APP_NAME", "next-emby"),
+		AppName:       getEnv("APP_NAME", "emotion"),
 		AppAuthNumber: getEnvInt("APP_AUTH_NUMBER", 10),
 		AppLogLevel:   getEnv("APP_LOG_LEVEL", "info"),
 
@@ -64,7 +64,7 @@ func Load() *Config {
 		DBDriver:       getEnv("DB_DRIVER", "mysql"),
 		DBHost:         getEnv("DB_HOST", "127.0.0.1"),
 		DBPort:         getEnvInt("DB_PORT", 3306),
-		DBDatabase:     getEnv("DB_DATABASE", "next_emby"),
+		DBDatabase:     getEnv("DB_DATABASE", "emotion"),
 		DBUsername:     getEnv("DB_USERNAME", "root"),
 		DBPassword:     getEnv("DB_PASSWORD", ""),
 		DBMaxOpenConns: getEnvInt("DB_MAX_OPEN_CONNS", 20),
@@ -81,10 +81,10 @@ func Load() *Config {
 		TMDBLanguage:   getEnv("TMDB_LANGUAGE", "zh-CN"),
 		TMDBAutoScrape: strings.EqualFold(getEnv("TMDB_AUTO_SCRAPE", "true"), "true"),
 
-		SearchDefaultList: getEnv("SEARCH_DEFAULT_LIST", `{"欢迎来到 next-emby":1}`),
+		SearchDefaultList: getEnv("SEARCH_DEFAULT_LIST", `{"欢迎来到 emotion":1}`),
 
 		EmbyVersion:          getEnv("EMBY_VERSION", "4.8.10.0"),
-		EmbyID:               getEnv("EMBY_ID", "next-emby"),
+		EmbyID:               getEnv("EMBY_ID", "emotion"),
 		EmbyExtServerDomains: getEnv("EMBY_EXT_SERVER_DOMAINS", ""),
 	}
 }

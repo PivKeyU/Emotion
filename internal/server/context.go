@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"log/slog"
 
-	"github.com/PivKeyU/Next-Emby/internal/cache"
-	"github.com/PivKeyU/Next-Emby/internal/config"
+	"github.com/PivKeyU/Emotion/internal/cache"
+	"github.com/PivKeyU/Emotion/internal/config"
 )
 
 // Dependencies is the set of shared services injected into handlers.

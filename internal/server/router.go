@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/PivKeyU/Next-Emby/internal/server/handlers"
+	"github.com/PivKeyU/Emotion/internal/server/handlers"
 )
 
 // NewRouter assembles the full chi router.
@@ -130,7 +130,7 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 	r.Post(prefix+"/user_usage_stats/submit_custom_query", mgmt.UsageStatsQuery)
 
 	// --- admin (manual library management) ---
-	// These sit under /admin (no /emby prefix parity — they're native to Next-Emby).
+	// These sit under /admin (no /emby prefix parity — they're native to Emotion).
 	if prefix == "" {
 		admin := handlers.NewAdmin(deps.DB, deps.Config, deps.Logger)
 		r.Get("/admin/libraries", admin.LibrariesList)

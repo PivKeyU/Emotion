@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
+	"github.com/PivKeyU/Emotion/internal/config"
 )
 
 // System provides /System/* endpoints that Emby clients call at startup to
@@ -38,12 +38,12 @@ func (s *System) Info(w http.ResponseWriter, r *http.Request) {
 		"CanSelfRestart":                   false,
 		"CanSelfUpdate":                    false,
 		"CanLaunchWebBrowser":              false,
-		"ProgramDataPath":                  "/next-emby",
-		"ItemsByNamePath":                  "/next-emby/metadata",
-		"CachePath":                        "/next-emby/cache",
-		"LogPath":                          "/next-emby/logs",
-		"InternalMetadataPath":             "/next-emby/metadata",
-		"TranscodingTempPath":              "/next-emby/transcoding-temp",
+		"ProgramDataPath":                  "/emotion",
+		"ItemsByNamePath":                  "/emotion/metadata",
+		"CachePath":                        "/emotion/cache",
+		"LogPath":                          "/emotion/logs",
+		"InternalMetadataPath":             "/emotion/metadata",
+		"TranscodingTempPath":              "/emotion/transcoding-temp",
 		"HttpServerPortNumber":             s.cfg.ServerPort,
 		"SupportsHttps":                    false,
 		"HttpsPortNumber":                  8920,
@@ -79,7 +79,7 @@ func (s *System) InfoPublic(w http.ResponseWriter, r *http.Request) {
 
 // Ping is Emby's keep-alive endpoint. Real Emby returns plain text "Emby Server".
 func (s *System) Ping(w http.ResponseWriter, r *http.Request) {
-	WriteText(w, http.StatusOK, "Next-Emby Server")
+	WriteText(w, http.StatusOK, "Emotion Server")
 }
 
 // ExtServerDomains returns the optional UHD-Now "server domains" list.

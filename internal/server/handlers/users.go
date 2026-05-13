@@ -12,12 +12,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/PivKeyU/Next-Emby/internal/auth"
-	"github.com/PivKeyU/Next-Emby/internal/config"
-	"github.com/PivKeyU/Next-Emby/internal/db"
-	"github.com/PivKeyU/Next-Emby/internal/emby"
-	"github.com/PivKeyU/Next-Emby/internal/external"
-	"github.com/PivKeyU/Next-Emby/internal/server/ctxpkg"
+	"github.com/PivKeyU/Emotion/internal/auth"
+	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/external"
+	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
 // Users serves /Users/* endpoints.
@@ -217,7 +217,7 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 				"PlaybackRate":   1,
 			},
 			"AdditionalUsers":     []any{},
-			"RemoteEndPoint":      "next-emby",
+			"RemoteEndPoint":      "emotion",
 			"PlayableMediaTypes":  []any{},
 			"PlaylistIndex":       0,
 			"PlaylistLength":      0,

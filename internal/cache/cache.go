@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PivKeyU/Next-Emby/internal/config"
+	"github.com/PivKeyU/Emotion/internal/config"
 )
 
 // Cache is the minimal interface used by the server.
