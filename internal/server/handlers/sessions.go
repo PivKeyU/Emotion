@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -20,14 +19,14 @@ import (
 // for the server (emby clients require at least one), and record playback
 // progress / stops from the client.
 type Sessions struct {
-	db    *sql.DB
+	db    *db.DB
 	cache cache.Cache
 	cfg   *config.Config
 	log   *slog.Logger
 }
 
 // NewSessions builds the handler.
-func NewSessions(database *sql.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Sessions {
+func NewSessions(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Sessions {
 	return &Sessions{db: database, cache: c, cfg: cfg, log: log}
 }
 
@@ -46,24 +45,24 @@ func (s *Sessions) List(w http.ResponseWriter, r *http.Request) {
 				"Shuffle":        false,
 				"PlaybackRate":   1,
 			},
-			"AdditionalUsers":     []any{},
-			"RemoteEndPoint":      "emotion",
-			"Protocol":            "HTTP/1.1",
-			"PlayableMediaTypes":  []any{"Audio", "Video"},
-			"PlaylistIndex":       0,
-			"PlaylistLength":      0,
-			"Id":                  s.cfg.EmbyID,
-			"ServerId":            s.cfg.EmbyID,
-			"UserId":              "",
-			"UserName":            "",
-			"Client":              "",
-			"LastActivityDate":    emby.FormatTimeNow(),
-			"DeviceName":          "",
-			"InternalDeviceId":    0,
-			"DeviceId":            "",
-			"ApplicationVersion":  s.cfg.EmbyVersion,
-			"AppIconUrl":          "",
-			"SupportedCommands":   []any{},
+			"AdditionalUsers":       []any{},
+			"RemoteEndPoint":        "emotion",
+			"Protocol":              "HTTP/1.1",
+			"PlayableMediaTypes":    []any{"Audio", "Video"},
+			"PlaylistIndex":         0,
+			"PlaylistLength":        0,
+			"Id":                    s.cfg.EmbyID,
+			"ServerId":              s.cfg.EmbyID,
+			"UserId":                "",
+			"UserName":              "",
+			"Client":                "",
+			"LastActivityDate":      emby.FormatTimeNow(),
+			"DeviceName":            "",
+			"InternalDeviceId":      0,
+			"DeviceId":              "",
+			"ApplicationVersion":    s.cfg.EmbyVersion,
+			"AppIconUrl":            "",
+			"SupportedCommands":     []any{},
 			"SupportsRemoteControl": false,
 		},
 	})
@@ -87,13 +86,13 @@ func (s *Sessions) Ping(w http.ResponseWriter, r *http.Request) {
 // playingBody is a lenient decoder for all the progress/start/stop payloads.
 // emya lower-cases all body keys, so we do the same by normalizing in code.
 type playingBody struct {
-	ItemID           string `json:"itemid"`
-	MediaSourceID    string `json:"mediasourceid"`
-	PositionTicks    int64  `json:"positionticks"`
-	IsPaused         bool   `json:"ispaused"`
-	PlaySessionID    string `json:"playsessionid"`
-	PlayMethod       string `json:"playmethod"`
-	EventName        string `json:"eventname"`
+	ItemID        string `json:"itemid"`
+	MediaSourceID string `json:"mediasourceid"`
+	PositionTicks int64  `json:"positionticks"`
+	IsPaused      bool   `json:"ispaused"`
+	PlaySessionID string `json:"playsessionid"`
+	PlayMethod    string `json:"playmethod"`
+	EventName     string `json:"eventname"`
 }
 
 // Playing records play / progress / stopped events.

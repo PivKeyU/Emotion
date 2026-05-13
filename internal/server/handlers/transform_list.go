@@ -14,16 +14,16 @@ import (
 
 // VideoListSearch is the search / list specification used by emya UserItems.
 type VideoListSearch struct {
-	ParentID        string
-	StartIndex      int
-	Limit           int
-	SortOrder       string // Ascending / Descending
-	SortBy          string // csv
-	Filters         []string
+	ParentID         string
+	StartIndex       int
+	Limit            int
+	SortOrder        string // Ascending / Descending
+	SortBy           string // csv
+	Filters          []string
 	IncludeItemTypes []string
-	SearchTerm      string
-	NameStartsWith  string
-	AnyProviderTmdb string
+	SearchTerm       string
+	NameStartsWith   string
+	AnyProviderTmdb  string
 }
 
 // VideoListResult is (rows, total).
@@ -182,12 +182,12 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 	items := []any{}
 	for rows.Next() {
 		var (
-			id         int64
-			tmdbID     db.NullString
-			videoType  string
-			title      string
-			dateAir    sql.NullTime
-			createdAt  time.Time
+			id        int64
+			tmdbID    db.NullString
+			videoType string
+			title     string
+			dateAir   sql.NullTime
+			createdAt time.Time
 		)
 		if err := rows.Scan(&id, &tmdbID, &videoType, &title, &dateAir, &createdAt); err != nil {
 			return VideoListResult{}, err
@@ -195,14 +195,14 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 		isMovie := videoType == db.VideoTypeMovie
 		rowID := emby.ItemID(emby.ItemIDTypeVideoList, id)
 		item := map[string]any{
-			"Name":        title,
-			"ServerId":    t.cfg.EmbyID,
-			"Id":          rowID,
-			"DateCreated": emby.FormatTime(createdAt),
-			"Path":        "/.strm",
-			"Genres":      []any{},
-			"People":      []any{},
-			"GenreItems":  []any{},
+			"Name":           title,
+			"ServerId":       t.cfg.EmbyID,
+			"Id":             rowID,
+			"DateCreated":    emby.FormatTime(createdAt),
+			"Path":           "/.strm",
+			"Genres":         []any{},
+			"People":         []any{},
+			"GenreItems":     []any{},
 			"ProductionYear": yearOf(dateAir),
 			"ProviderIds": map[string]any{
 				"Tmdb": tmdbID.String,

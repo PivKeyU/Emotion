@@ -22,7 +22,7 @@ import (
 
 // Users serves /Users/* endpoints.
 type Users struct {
-	db        *sql.DB
+	db        *db.DB
 	cfg       *config.Config
 	log       *slog.Logger
 	transform *Transform
@@ -30,7 +30,7 @@ type Users struct {
 }
 
 // NewUsers builds the handler.
-func NewUsers(database *sql.DB, cfg *config.Config, log *slog.Logger) *Users {
+func NewUsers(database *db.DB, cfg *config.Config, log *slog.Logger) *Users {
 	return &Users{
 		db:        database,
 		cfg:       cfg,
@@ -138,12 +138,12 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 		userID = data.UserID
 
 		foldersJSON, _ := json.Marshal(data.Folders)
-		update := `INSERT INTO user (id, username, folders, is_can_down)
+		update := `INSERT INTO app_user (id, username, folders, is_can_down)
 			VALUES (?, ?, ?, ?)
-			ON DUPLICATE KEY UPDATE
-				username = VALUES(username),
-				folders  = VALUES(folders),
-				is_can_down = VALUES(is_can_down)`
+			ON CONFLICT (id) DO UPDATE SET
+				username = EXCLUDED.username,
+				folders = EXCLUDED.folders,
+				is_can_down = EXCLUDED.is_can_down`
 		if _, err := u.db.ExecContext(ctx, update, userID, data.Username, foldersJSON, data.IsCanDown); err != nil {
 			u.log.Error("upsert user failed", "err", err)
 			WriteText(w, http.StatusInternalServerError, "保存用户失败")
@@ -152,12 +152,12 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Local DB auth.
 		var (
-			id         int64
-			storedPw   db.NullString
-			isDisable  db.NullBool
+			id        int64
+			storedPw  db.NullString
+			isDisable db.NullBool
 		)
 		err := u.db.QueryRowContext(ctx,
-			"SELECT id, password, is_disable FROM user WHERE username = ? AND deleted_at IS NULL LIMIT 1",
+			"SELECT id, password, is_disable FROM app_user WHERE username = ? AND deleted_at IS NULL LIMIT 1",
 			username,
 		).Scan(&id, &storedPw, &isDisable)
 		if err != nil {
@@ -216,22 +216,22 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 				"Shuffle":        false,
 				"PlaybackRate":   1,
 			},
-			"AdditionalUsers":     []any{},
-			"RemoteEndPoint":      "emotion",
-			"PlayableMediaTypes":  []any{},
-			"PlaylistIndex":       0,
-			"PlaylistLength":      0,
-			"Id":                  embyUser["Id"],
-			"ServerId":            u.cfg.EmbyID,
-			"UserId":              embyUser["Id"],
-			"UserName":            embyUser["Name"],
-			"Client":              device.Client,
-			"LastActivityDate":    now,
-			"DeviceName":          device.Device,
-			"InternalDeviceId":    0,
-			"DeviceId":            device.DeviceID,
-			"ApplicationVersion":  device.Version,
-			"SupportedCommands":   []any{},
+			"AdditionalUsers":       []any{},
+			"RemoteEndPoint":        "emotion",
+			"PlayableMediaTypes":    []any{},
+			"PlaylistIndex":         0,
+			"PlaylistLength":        0,
+			"Id":                    embyUser["Id"],
+			"ServerId":              u.cfg.EmbyID,
+			"UserId":                embyUser["Id"],
+			"UserName":              embyUser["Name"],
+			"Client":                device.Client,
+			"LastActivityDate":      now,
+			"DeviceName":            device.Device,
+			"InternalDeviceId":      0,
+			"DeviceId":              device.DeviceID,
+			"ApplicationVersion":    device.Version,
+			"SupportedCommands":     []any{},
 			"SupportsRemoteControl": false,
 		},
 		"AccessToken": token,
@@ -457,26 +457,26 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 					"IsFavorite":            false,
 					"Played":                uvr.IsComplete,
 				},
-				"SeriesName":             videoTitle.String,
-				"SeriesId":               videoID,
-				"SeriesPrimaryImageTag":  "",
-				"SeasonName":             seasonTitle.String,
-				"SeasonId":               emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID.Int64),
+				"SeriesName":              videoTitle.String,
+				"SeriesId":                videoID,
+				"SeriesPrimaryImageTag":   "",
+				"SeasonName":              seasonTitle.String,
+				"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID.Int64),
 				"PrimaryImageAspectRatio": 1.7,
-				"ImageTags":              map[string]any{"Primary": episodeID},
-				"BackdropImageTags":      []any{},
-				"MediaType":              "Video",
+				"ImageTags":               map[string]any{"Primary": episodeID},
+				"BackdropImageTags":       []any{},
+				"MediaType":               "Video",
 			}
 			out = append(out, item)
 		} else {
 			out = append(out, map[string]any{
-				"Name":                    videoTitle.String,
-				"Id":                      videoID,
-				"CanDelete":               false,
-				"RunTimeTicks":            int64(0),
-				"ProductionYear":          videoDateAir.Time.Year(),
-				"IsFolder":                false,
-				"Type":                    "Movie",
+				"Name":           videoTitle.String,
+				"Id":             videoID,
+				"CanDelete":      false,
+				"RunTimeTicks":   int64(0),
+				"ProductionYear": videoDateAir.Time.Year(),
+				"IsFolder":       false,
+				"Type":           "Movie",
 				"UserData": map[string]any{
 					"PlayedPercentage":      uvr.Percentage,
 					"PlaybackPositionTicks": uvr.PlayMs,

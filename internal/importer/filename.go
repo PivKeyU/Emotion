@@ -177,8 +177,6 @@ func cleanTitle(s string) string {
 	return s
 }
 
-
-
 // looksLikePlaceholder detects titles that came from a generic-looking filename
 // ("01", "Part 1", short ASCII tokens) and would benefit from being replaced
 // with a better candidate from the parent folder.

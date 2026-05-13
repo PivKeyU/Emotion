@@ -4,9 +4,11 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Config holds all application configuration.
@@ -18,13 +20,15 @@ type Config struct {
 	ServerHost string
 	ServerPort int
 
-	DBDriver       string
-	DBHost         string
-	DBPort         int
-	DBDatabase     string
-	DBUsername     string
-	DBPassword     string
-	DBMaxOpenConns int
+	DBDriver          string
+	DBHost            string
+	DBPort            int
+	DBDatabase        string
+	DBUsername        string
+	DBPassword        string
+	DBMaxOpenConns    int
+	DBMaxIdleConns    int
+	DBConnMaxLifetime time.Duration
 
 	ValkeyHost     string
 	ValkeyPort     int
@@ -53,6 +57,12 @@ type Config struct {
 
 // Load reads configuration from environment variables.
 func Load() *Config {
+	maxOpen := getEnvInt("DB_MAX_OPEN_CONNS", 100)
+	maxIdle := getEnvInt("DB_MAX_IDLE_CONNS", 25)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+
 	return &Config{
 		AppName:       getEnv("APP_NAME", "emotion"),
 		AppAuthNumber: getEnvInt("APP_AUTH_NUMBER", 10),
@@ -61,13 +71,15 @@ func Load() *Config {
 		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),
 		ServerPort: getEnvInt("SERVER_PORT", 8096),
 
-		DBDriver:       getEnv("DB_DRIVER", "mysql"),
-		DBHost:         getEnv("DB_HOST", "127.0.0.1"),
-		DBPort:         getEnvInt("DB_PORT", 3306),
-		DBDatabase:     getEnv("DB_DATABASE", "emotion"),
-		DBUsername:     getEnv("DB_USERNAME", "root"),
-		DBPassword:     getEnv("DB_PASSWORD", ""),
-		DBMaxOpenConns: getEnvInt("DB_MAX_OPEN_CONNS", 20),
+		DBDriver:          getEnv("DB_DRIVER", "postgres"),
+		DBHost:            getEnv("DB_HOST", "127.0.0.1"),
+		DBPort:            getEnvInt("DB_PORT", 5432),
+		DBDatabase:        getEnv("DB_DATABASE", "emotion"),
+		DBUsername:        getEnv("DB_USERNAME", "emotion"),
+		DBPassword:        getEnv("DB_PASSWORD", ""),
+		DBMaxOpenConns:    maxOpen,
+		DBMaxIdleConns:    maxIdle,
+		DBConnMaxLifetime: time.Duration(getEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 30)) * time.Minute,
 
 		ValkeyHost:     getEnv("VALKEY_HOST", ""),
 		ValkeyPort:     getEnvInt("VALKEY_PORT", 6379),
@@ -89,11 +101,11 @@ func Load() *Config {
 	}
 }
 
-// DSN returns the MySQL Data Source Name for this configuration.
+// DSN returns the PostgreSQL Data Source Name for this configuration.
 func (c *Config) DSN() string {
 	return fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4&collation=utf8mb4_unicode_ci&loc=Local&multiStatements=true",
-		c.DBUsername, c.DBPassword, c.DBHost, c.DBPort, c.DBDatabase,
+		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
+		url.QueryEscape(c.DBUsername), url.QueryEscape(c.DBPassword), c.DBHost, c.DBPort, c.DBDatabase,
 	)
 }
 

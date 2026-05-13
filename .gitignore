@@ -7,6 +7,9 @@
 .env
 .env.local
 
+# local media/data
+/data/
+
 # logs
 /logs/
 *.log

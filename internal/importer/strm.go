@@ -13,21 +13,21 @@ import (
 // In the wild they come in several flavors:
 //
 //  1. Single URL (most common):
-//       https://cdn.example.com/movie.mkv
+//     https://cdn.example.com/movie.mkv
 //
 //  2. URL with query params / signed URLs (cloud drives):
-//       https://pan.example.com/redirect?fid=123&sign=abc
+//     https://pan.example.com/redirect?fid=123&sign=abc
 //
 //  3. plugin:// URLs (Kodi-only); we treat as opaque URL.
 //
 //  4. Local absolute or relative paths:
-//       /mnt/media/movies/foo.mkv
-//       ../downloads/bar.mp4
+//     /mnt/media/movies/foo.mkv
+//     ../downloads/bar.mp4
 //
 //  5. Multi-line with comments (primary first, fallback after):
-//       # preferred source
-//       https://primary.example.com/movie.mkv
-//       https://fallback.example.com/movie.mkv
+//     # preferred source
+//     https://primary.example.com/movie.mkv
+//     https://fallback.example.com/movie.mkv
 //
 // We capture every non-empty, non-comment line as Targets, and the first as Primary.
 type STRM struct {

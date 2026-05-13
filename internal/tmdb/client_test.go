@@ -22,17 +22,17 @@ func TestClient_MovieHappyPath(t *testing.T) {
 		gotRequest = r
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":              502419,
-			"title":           "安彦良和・板野一郎原画摄影集",
-			"original_title":  "Yasuhiko & Itano",
-			"overview":        "动画大师对谈",
-			"release_date":    "2014-05-12",
-			"runtime":         90,
-			"poster_path":     "/abc.jpg",
-			"backdrop_path":   "/def.jpg",
-			"genres":          []map[string]any{{"id": 16, "name": "动画"}},
-			"imdb_id":         "tt1234567",
-			"vote_average":    7.5,
+			"id":             502419,
+			"title":          "安彦良和・板野一郎原画摄影集",
+			"original_title": "Yasuhiko & Itano",
+			"overview":       "动画大师对谈",
+			"release_date":   "2014-05-12",
+			"runtime":        90,
+			"poster_path":    "/abc.jpg",
+			"backdrop_path":  "/def.jpg",
+			"genres":         []map[string]any{{"id": 16, "name": "动画"}},
+			"imdb_id":        "tt1234567",
+			"vote_average":   7.5,
 		})
 	}))
 	defer srv.Close()

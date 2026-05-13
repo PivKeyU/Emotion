@@ -177,8 +177,103 @@
   .stat .k { color: var(--muted); font-size: 12px; }
   .stat .v { font-size: 22px; font-weight: 600; margin-top: 4px; }
 
+  /* ---------- media browser ---------- */
+  .media-toolbar {
+    display: grid;
+    grid-template-columns: minmax(160px, 220px) minmax(150px, 180px) 1fr auto;
+    gap: 10px;
+    align-items: end;
+    margin-bottom: 14px;
+  }
+  .media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+  }
+  .media-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .media-card .poster {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    background: linear-gradient(160deg, #202532 0%, #12151d 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .media-card .poster img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .media-card .poster .fallback {
+    width: 76%;
+    text-align: center;
+    word-break: break-word;
+  }
+  .media-card .badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(0,0,0,0.72);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
+  .media-card .body { padding: 10px 12px 12px; }
+  .media-card .title {
+    font-weight: 600;
+    line-height: 1.35;
+    min-height: 38px;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .media-card .meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 6px;
+    min-height: 18px;
+  }
+  .media-card details {
+    margin-top: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .media-card summary {
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 12px;
+  }
+  .media-card .details {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .media-card .details ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  .media-card .details li { margin: 2px 0; }
+  .media-pager {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 14px;
+    color: var(--muted);
+  }
+
   /* ---------- output / log ---------- */
-  pre.output {
+  .output {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -188,7 +283,24 @@
     white-space: pre-wrap; word-break: break-all;
     color: #cfd4e0;
   }
-  pre.output.empty { color: var(--muted); }
+  .output.empty { color: var(--muted); }
+  .scan-summary { display: grid; gap: 12px; }
+  .scan-summary .headline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    color: var(--muted);
+  }
+  .scan-summary .stat-grid { margin-top: 2px; }
+  .scan-summary .errors {
+    background: rgba(224, 88, 88, 0.08);
+    border: 1px solid #5a2a2a;
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: #ffb0b0;
+  }
+  .scan-summary .errors ul { margin: 6px 0 0; padding-left: 18px; }
 
   /* ---------- toast ---------- */
   #toast-box {
@@ -306,6 +418,36 @@
         </tbody>
       </table>
     </div>
+
+    <div class="card">
+      <h3>媒体内容</h3>
+      <div class="media-toolbar">
+        <div class="col"><label>媒体库</label>
+          <select id="media-library"><option value="">全部媒体库</option></select>
+        </div>
+        <div class="col"><label>类型</label>
+          <select id="media-type">
+            <option value="">全部</option>
+            <option value="movie">电影</option>
+            <option value="tv">剧集</option>
+          </select>
+        </div>
+        <div class="col"><label>搜索</label>
+          <input id="media-search" placeholder="按标题搜索" />
+        </div>
+        <button class="btn secondary" id="btn-media-load">刷新</button>
+      </div>
+      <div id="media-grid" class="media-grid">
+        <div class="muted">连接后加载媒体内容。</div>
+      </div>
+      <div class="media-pager">
+        <span id="media-page-info">-</span>
+        <div>
+          <button class="btn sm secondary" id="btn-media-prev">上一页</button>
+          <button class="btn sm secondary" id="btn-media-next">下一页</button>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- ========== SCANNER ========== -->
@@ -354,7 +496,7 @@
 
     <div class="card">
       <h3>扫描结果</h3>
-      <pre class="output empty" id="scan-output">暂无输出</pre>
+      <div class="output empty" id="scan-output">暂无输出</div>
     </div>
   </section>
 
@@ -542,6 +684,11 @@ const state = {
   url: "",       // e.g. http://host:8096  (empty = same origin)
   key: "",
   libs: [],      // [{id, name, role, ...}]
+  media: [],     // admin media rows
+  mediaTotal: 0,
+  mediaOffset: 0,
+  mediaLimit: 48,
+  mediaChildren: {},
   users: [],     // [{id, name, is_admin, is_disabled, is_can_download}]
   counts: null,
   sessions: [],
@@ -639,6 +786,8 @@ function clearAll() {
   $("#stat-users").textContent = "-";
   $("#stat-sessions").textContent = "-";
   $("#libs-tbody").innerHTML = emptyRow(5);
+  $("#media-grid").innerHTML = `<div class="muted">连接后加载媒体内容。</div>`;
+  $("#media-page-info").textContent = "-";
   $("#users-tbody").innerHTML = emptyRow(6);
   $("#sess-tbody").innerHTML = emptyRow(6);
   $("#usage-tbody").innerHTML = emptyRow(3);
@@ -672,6 +821,7 @@ async function connect() {
     await Promise.allSettled([
       loadCounts(),
       loadLibraries(),
+      loadMedia(true),
       loadUsers(),
       loadSessions(),
     ]);
@@ -744,6 +894,11 @@ function populateScanLibSelect() {
   sel.innerHTML = state.libs.length
     ? state.libs.map(l => `<option value="${l.id}">${escHTML(l.name)} (#${l.id})</option>`).join("")
     : `<option value="">(请先创建媒体库)</option>`;
+
+  const mediaSel = $("#media-library");
+  mediaSel.innerHTML = `<option value="">全部媒体库</option>` + state.libs.map(l =>
+    `<option value="${l.id}">${escHTML(l.name)} (#${l.id})</option>`
+  ).join("");
 }
 async function createLibrary() {
   const name = $("#lib-new-name").value.trim();
@@ -763,6 +918,118 @@ async function deleteLibrary(id) {
     toast("已删除", "ok");
     await loadLibraries();
   } catch (e) { toast(e.message, "err"); }
+}
+
+// ------------------ media browser ------------------
+async function loadMedia(reset = false) {
+  if (reset) state.mediaOffset = 0;
+  const params = new URLSearchParams();
+  params.set("limit", String(state.mediaLimit));
+  params.set("offset", String(state.mediaOffset));
+  const lib = $("#media-library").value;
+  const typ = $("#media-type").value;
+  const search = $("#media-search").value.trim();
+  if (lib) params.set("library_id", lib);
+  if (typ) params.set("type", typ);
+  if (search) params.set("search", search);
+
+  const grid = $("#media-grid");
+  grid.innerHTML = `<div class="muted">正在加载媒体内容…</div>`;
+  try {
+    const res = await api("GET", "/admin/media?" + params.toString());
+    state.media = Array.isArray(res.items) ? res.items : [];
+    state.mediaTotal = Number(res.total || 0);
+    renderMedia();
+  } catch (e) {
+    grid.innerHTML = `<div class="muted">加载失败: ${escHTML(e.message)}</div>`;
+  }
+}
+
+function renderMedia() {
+  const grid = $("#media-grid");
+  if (!state.media.length) {
+    grid.innerHTML = `<div class="muted">暂无媒体。扫描入库后会显示电影和剧集。</div>`;
+    $("#media-page-info").textContent = "0 / 0";
+    return;
+  }
+  grid.innerHTML = state.media.map(item => mediaCardHTML(item)).join("");
+  const start = state.mediaOffset + 1;
+  const end = Math.min(state.mediaOffset + state.media.length, state.mediaTotal);
+  $("#media-page-info").textContent = `${start}-${end} / ${state.mediaTotal}`;
+}
+
+function mediaCardHTML(item) {
+  const isSeries = item.type === "tv";
+  const kind = isSeries ? "剧集" : "电影";
+  const poster = item.poster_url
+    ? `<img src="${escHTML(item.poster_url)}" alt="${escHTML(item.title)}" loading="lazy" onerror="this.remove()" />`
+    : `<div class="fallback">${escHTML(item.title)}</div>`;
+  const counts = isSeries
+    ? `${item.season_count || 0} 季 · ${item.episode_count || 0} 集`
+    : `${item.media_count || 0} 个媒体`;
+  const year = item.year ? ` · ${item.year}` : "";
+  return `
+    <article class="media-card" data-id="${item.id}">
+      <div class="poster">
+        ${poster}
+        <span class="badge">${kind}</span>
+      </div>
+      <div class="body">
+        <div class="title" title="${escHTML(item.title)}">${escHTML(item.title)}</div>
+        <div class="meta">${counts}${year}</div>
+        <details data-media-id="${item.id}">
+          <summary>展开详情</summary>
+          <div class="details" id="media-details-${item.id}">点击后加载…</div>
+        </details>
+      </div>
+    </article>
+  `;
+}
+
+async function loadMediaChildren(id) {
+  if (state.mediaChildren[id]) {
+    renderMediaChildren(id, state.mediaChildren[id]);
+    return;
+  }
+  const el = $("#media-details-" + id);
+  if (el) el.textContent = "正在加载…";
+  try {
+    const res = await api("GET", "/admin/media/" + id + "/children");
+    state.mediaChildren[id] = res;
+    renderMediaChildren(id, res);
+  } catch (e) {
+    if (el) el.textContent = "加载失败: " + e.message;
+  }
+}
+
+function renderMediaChildren(id, data) {
+  const el = $("#media-details-" + id);
+  if (!el) return;
+  const seasons = data.seasons || [];
+  const episodes = data.episodes || [];
+  const sources = data.sources || [];
+  const parts = [];
+  if (data.type === "tv") {
+    parts.push(`<div>${seasons.length} 季，${episodes.length} 集</div>`);
+    if (seasons.length) {
+      parts.push(`<ul>${seasons.slice(0, 8).map(s =>
+        `<li>第 ${s.season_number} 季：${escHTML(s.title)}，${s.episode_count} 集</li>`
+      ).join("")}${seasons.length > 8 ? `<li>还有 ${seasons.length - 8} 季…</li>` : ""}</ul>`);
+    }
+    if (!seasons.length && episodes.length) {
+      parts.push(`<ul>${episodes.slice(0, 12).map(e =>
+        `<li>S${e.season_number || 0}E${e.episode_number}: ${escHTML(e.title)}</li>`
+      ).join("")}${episodes.length > 12 ? `<li>还有 ${episodes.length - 12} 集…</li>` : ""}</ul>`);
+    }
+  } else {
+    parts.push(`<div>${sources.length} 个媒体源</div>`);
+    if (sources.length) {
+      parts.push(`<ul>${sources.slice(0, 6).map(s =>
+        `<li>${escHTML(s.name || s.uuid)}</li>`
+      ).join("")}${sources.length > 6 ? `<li>还有 ${sources.length - 6} 个源…</li>` : ""}</ul>`);
+    }
+  }
+  el.innerHTML = parts.join("") || "暂无详情";
 }
 
 // ------------------ scanner ------------------
@@ -788,15 +1055,61 @@ async function runScan() {
       scrape: scrape || undefined,
       follow_symlinks: follow, dry_run: dry,
     });
-    out.textContent = JSON.stringify(res, null, 2);
+    renderScanResult(res);
     toast("扫描完成", "ok");
     await loadCounts();
+    await loadMedia(true);
   } catch (e) {
     out.textContent = "错误: " + e.message;
     toast(e.message, "err", 6000);
   } finally {
     btn.disabled = false; btn.textContent = "开始扫描";
   }
+}
+
+function scanReport(res) {
+  return res && res.import ? res.import : res;
+}
+
+function renderScanResult(res) {
+  const rep = scanReport(res) || {};
+  const tmdb = res && res.import ? (res.tmdb || []) : null;
+  const out = $("#scan-output");
+  const durationMs = Number(rep.duration_ms || 0);
+  const duration = durationMs >= 1000
+    ? (durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1) + " 秒"
+    : Math.round(durationMs) + " ms";
+  const stats = [
+    ["扫描目录", rep.scanned_dirs],
+    ["电影", rep.movies_imported],
+    ["剧集", rep.series_imported],
+    ["季", rep.seasons_imported],
+    ["集数", rep.episodes_imported],
+    ["媒体源", rep.media_rows_imported],
+    ["跳过", rep.skipped],
+  ];
+  const touched = Array.isArray(rep.touched_video_list_ids) ? rep.touched_video_list_ids.length : 0;
+  out.innerHTML = `
+    <div class="scan-summary">
+      <div class="headline">
+        <span class="tag ok">扫描完成</span>
+        <span>用时 ${escHTML(duration)}</span>
+        <span>${rep.finished_at ? escHTML(rep.finished_at) : ""}</span>
+      </div>
+      <div class="stat-grid">
+        ${stats.map(([k, v]) => `
+          <div class="stat"><div class="k">${escHTML(k)}</div><div class="v">${Number(v || 0)}</div></div>
+        `).join("")}
+      </div>
+      <div class="muted">本次触达 ${touched} 个条目${tmdb ? `，TMDB 返回 ${tmdb.length} 条结果` : ""}。</div>
+      ${Array.isArray(rep.errors) && rep.errors.length ? `
+        <div class="errors">
+          <strong>错误</strong>
+          <ul>${rep.errors.slice(0, 20).map(e => `<li>${escHTML(e)}</li>`).join("")}</ul>
+        </div>
+      ` : ""}
+    </div>
+  `;
 }
 
 // ------------------ tmdb ------------------
@@ -1030,6 +1343,7 @@ function bindUI() {
         if (n.dataset.view === "sessions") loadSessions();
         if (n.dataset.view === "users")    loadUsers();
         if (n.dataset.view === "libraries") loadLibraries();
+        if (n.dataset.view === "libraries") loadMedia(false);
       }
     };
   });
@@ -1041,6 +1355,27 @@ function bindUI() {
     if (!btn) return;
     if (btn.dataset.act === "lib-del") deleteLibrary(btn.dataset.id);
   });
+  $("#btn-media-load").onclick = () => loadMedia(true);
+  $("#media-library").onchange = () => loadMedia(true);
+  $("#media-type").onchange = () => loadMedia(true);
+  $("#media-search").addEventListener("keydown", e => {
+    if (e.key === "Enter") loadMedia(true);
+  });
+  $("#btn-media-prev").onclick = () => {
+    state.mediaOffset = Math.max(0, state.mediaOffset - state.mediaLimit);
+    loadMedia(false);
+  };
+  $("#btn-media-next").onclick = () => {
+    if (state.mediaOffset + state.mediaLimit < state.mediaTotal) {
+      state.mediaOffset += state.mediaLimit;
+      loadMedia(false);
+    }
+  };
+  $("#media-grid").addEventListener("toggle", e => {
+    if (e.target.matches("details[data-media-id]") && e.target.open) {
+      loadMediaChildren(e.target.dataset.mediaId);
+    }
+  }, true);
 
   // scanner
   $("#btn-scan-run").onclick = runScan;

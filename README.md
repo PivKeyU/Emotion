@@ -28,7 +28,7 @@ internal/
   auth/               # bcrypt 密码 + Token 生成
   cache/              # Redis/Valkey 或内存缓存
   config/             # 环境变量配置
-  db/                 # MySQL 连接、schema 迁移、模型、常量
+  db/                 # PostgreSQL 连接、schema 迁移、模型、常量
   emby/               # Emby item-id、时间格式、Tick 换算
   external/           # API_EXTERNAL 外部回调客户端
   logger/             # slog 封装
@@ -57,7 +57,7 @@ docker compose up -d --build
 
 ### 本地开发
 
-需要 Go 1.24+ 以及 MySQL 8。
+需要 Go 1.24+ 以及 PostgreSQL 16+。
 
 ```bash
 cp .env.example .env
@@ -75,7 +75,7 @@ Emotion 启动时会自动执行 `internal/db/migrate.go` 里的建表 DDL，
 ### 1. 准备依赖
 
 - **Docker** + **Docker Compose**(推荐,最简单)
-- 或者:Go 1.24+ + MySQL 8 + (可选) 一个 Emby 客户端
+- 或者:Go 1.24+ + PostgreSQL 16+ + (可选) 一个 Emby 客户端
 
 ### 2. 克隆仓库
 
@@ -227,17 +227,18 @@ curl -X POST "http://localhost:8096/emby/Users/1/Policy?api_key=$API" \
 ### 10. 不用 Docker 的本地开发
 
 ```bash
-# 先启一个 MySQL
-docker run -d --name ne-mysql \
-  -e MYSQL_ROOT_PASSWORD=rootpw \
-  -e MYSQL_DATABASE=emotion \
-  -e MYSQL_USER=emotion \
-  -e MYSQL_PASSWORD=pw \
-  -p 3306:3306 \
-  mysql:8 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+# 先启一个 PostgreSQL
+docker run -d --name emotion-postgres \
+  -e POSTGRES_DB=emotion \
+  -e POSTGRES_USER=emotion \
+  -e POSTGRES_PASSWORD=pw \
+  -p 5432:5432 \
+  postgres:16-alpine
 
 # 改 .env:
+#   DB_DRIVER=postgres
 #   DB_HOST=127.0.0.1
+#   DB_PORT=5432
 #   DB_USERNAME=emotion
 #   DB_PASSWORD=pw
 
@@ -399,7 +400,7 @@ https://pan.example.com/redirect?fid=abc&sign=def
 
 扫描是**幂等**的 —— 重复跑同一个目录只会更新元数据,不会重复入库。
 
-### 方式 2:直接写 MySQL
+### 方式 2:直接写 PostgreSQL
 
 如果有自己的爬虫/刮削流水线,可以绕开扫描器直接写表。表结构:
 

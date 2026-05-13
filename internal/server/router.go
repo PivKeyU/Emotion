@@ -146,6 +146,8 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 		r.Get("/admin/libraries", admin.LibrariesList)
 		r.Post("/admin/libraries", admin.LibraryCreate)
 		r.Delete("/admin/libraries/{id}", admin.LibraryDelete)
+		r.Get("/admin/media", admin.AdminMediaList)
+		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Post("/admin/library/scan", admin.LibraryScan)
 		r.Post("/admin/items/{id}/tmdb/refresh", admin.TMDBRefreshOne)
 		r.Post("/admin/tmdb/refresh-all", admin.TMDBRefreshAll)

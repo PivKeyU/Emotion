@@ -38,17 +38,17 @@ type Options struct {
 
 // Report captures outcomes for a user-visible summary.
 type Report struct {
-	StartedAt  time.Time     `json:"started_at"`
-	FinishedAt time.Time     `json:"finished_at"`
-	Duration   time.Duration `json:"duration_ms"`
-	Scanned    int           `json:"scanned_dirs"`
-	Movies     int           `json:"movies_imported"`
-	Series     int           `json:"series_imported"`
-	Seasons    int           `json:"seasons_imported"`
-	Episodes   int           `json:"episodes_imported"`
-	MediaRows  int           `json:"media_rows_imported"`
-	Skipped    int           `json:"skipped"`
-	Errors     []string      `json:"errors,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	Duration   int64     `json:"duration_ms"`
+	Scanned    int       `json:"scanned_dirs"`
+	Movies     int       `json:"movies_imported"`
+	Series     int       `json:"series_imported"`
+	Seasons    int       `json:"seasons_imported"`
+	Episodes   int       `json:"episodes_imported"`
+	MediaRows  int       `json:"media_rows_imported"`
+	Skipped    int       `json:"skipped"`
+	Errors     []string  `json:"errors,omitempty"`
 
 	// TouchedVideoListIDs is the set of video_list rows that were inserted or
 	// updated during this run. Callers (typically the admin handler) can
@@ -58,12 +58,12 @@ type Report struct {
 
 // Importer coordinates scanning and DB upserts.
 type Importer struct {
-	db  *sql.DB
+	db  *db.DB
 	log *slog.Logger
 }
 
 // New constructs an Importer.
-func New(database *sql.DB, log *slog.Logger) *Importer {
+func New(database *db.DB, log *slog.Logger) *Importer {
 	return &Importer{db: database, log: log}
 }
 
@@ -117,7 +117,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 		bucket := dirs[dirPath]
 		if err := ctx.Err(); err != nil {
 			rep.FinishedAt = time.Now()
-			rep.Duration = rep.FinishedAt.Sub(rep.StartedAt)
+			rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
 			return rep, err
 		}
 
@@ -204,7 +204,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 
 	rep.FinishedAt = time.Now()
-	rep.Duration = rep.FinishedAt.Sub(rep.StartedAt)
+	rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
 	log.Info("import finished",
 		"dirs", rep.Scanned, "movies", rep.Movies,
 		"series", rep.Series, "seasons", rep.Seasons, "episodes", rep.Episodes,
@@ -217,15 +217,15 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 type itemKind int
 
 const (
-	itemKindMovie   itemKind = iota + 1
+	itemKindMovie itemKind = iota + 1
 	itemKindEpisode
 )
 
 // classifiedMedia bundles parsing results for a single media file.
 type classifiedMedia struct {
-	kind    itemKind
-	nfo     *NFO // may be nil
-	parsed  ParsedName
+	kind   itemKind
+	nfo    *NFO // may be nil
+	parsed ParsedName
 }
 
 // classifyMedia looks at a media file plus its directory context to decide
@@ -593,7 +593,7 @@ func (i *Importer) upsertMedia(
 	err = i.db.QueryRowContext(ctx, `
 		SELECT id, uuid FROM video_media
 		WHERE video_list_id = ?
-		  AND (video_episode_id <=> ?)
+		  AND video_episode_id IS NOT DISTINCT FROM ?
 		  AND path_url = ?
 		LIMIT 1
 	`, videoListID, nullableInt64(videoEpisodeID), pathURL).Scan(&existingID, &existingUUID)
@@ -845,8 +845,6 @@ func newUUID() string {
 
 // Render returns a JSON summary for the admin endpoint.
 func (r *Report) Render() ([]byte, error) { return json.Marshal(r) }
-
-
 
 // appendUnique appends id to dst if not already present.
 func appendUnique(dst []int64, id int64) []int64 {

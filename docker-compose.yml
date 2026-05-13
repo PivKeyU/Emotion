@@ -14,12 +14,15 @@ services:
       APP_NAME: emotion
       APP_LOG_LEVEL: info
 
-      DB_DRIVER: mysql
-      DB_HOST: mysql
-      DB_PORT: 3306
+      DB_DRIVER: postgres
+      DB_HOST: postgres
+      DB_PORT: 5432
       DB_DATABASE: emotion
       DB_USERNAME: emotion
       DB_PASSWORD: emotion_pwd
+      DB_MAX_OPEN_CONNS: 100
+      DB_MAX_IDLE_CONNS: 25
+      DB_CONN_MAX_LIFETIME_MINUTES: 30
 
       VALKEY_HOST: valkey
       VALKEY_PORT: 6379
@@ -36,24 +39,28 @@ services:
       EMBY_VERSION: 4.8.10.0
       EMBY_ID: emotion
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
 
-  mysql:
-    image: mysql:8
+  postgres:
+    image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      MYSQL_DATABASE: emotion
-      MYSQL_USER: emotion
-      MYSQL_PASSWORD: emotion_pwd
-      MYSQL_ROOT_PASSWORD: root_pwd
+      POSTGRES_DB: emotion
+      POSTGRES_USER: emotion
+      POSTGRES_PASSWORD: emotion_pwd
     command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p$$MYSQL_ROOT_PASSWORD"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -64,4 +71,4 @@ services:
     command: ["valkey-server", "--save", "", "--appendonly", "no"]
 
 volumes:
-  mysql-data:
+  postgres-data:

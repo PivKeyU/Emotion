@@ -27,12 +27,12 @@ import (
 //   - All DB work is idempotent so operators can rerun scrape safely.
 type Scraper struct {
 	client *Client
-	db     *sql.DB
+	db     *db.DB
 	log    *slog.Logger
 }
 
 // NewScraper wires up a scraper. tmdb may be nil if disabled (methods become no-ops).
-func NewScraper(tmdb *Client, database *sql.DB, log *slog.Logger) *Scraper {
+func NewScraper(tmdb *Client, database *db.DB, log *slog.Logger) *Scraper {
 	return &Scraper{client: tmdb, db: database, log: log}
 }
 
@@ -57,7 +57,7 @@ type BatchResult struct {
 	Matched   int            `json:"matched"`
 	Skipped   int            `json:"skipped"`
 	Failed    int            `json:"failed"`
-	Duration  time.Duration  `json:"duration_ms"`
+	Duration  int64          `json:"duration_ms"`
 	Errors    []string       `json:"errors,omitempty"`
 	Items     []ScrapeResult `json:"items,omitempty"`
 }
@@ -327,10 +327,10 @@ func (s *Scraper) updateSeason(ctx context.Context, seasonID int64, t *Season, f
 // existed and was considered for update; 0 if we skipped it entirely.
 func (s *Scraper) updateEpisode(ctx context.Context, seasonID int64, ep Episode, force bool) (int, error) {
 	var (
-		episodeID int64
-		curTitle  string
-		curDesc   sql.NullString
-		curAir    sql.NullTime
+		episodeID  int64
+		curTitle   string
+		curDesc    sql.NullString
+		curAir     sql.NullTime
 		curRuntime sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx, `
@@ -565,6 +565,6 @@ func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool
 		}
 		rep.Items = append(rep.Items, *res)
 	}
-	rep.Duration = time.Since(start)
+	rep.Duration = time.Since(start).Milliseconds()
 	return rep, nil
 }

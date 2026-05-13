@@ -18,14 +18,14 @@ import (
 
 // Shows serves /Shows/* endpoints (TV series navigation).
 type Shows struct {
-	db        *sql.DB
+	db        *db.DB
 	cfg       *config.Config
 	log       *slog.Logger
 	transform *Transform
 }
 
 // NewShows builds the handler.
-func NewShows(database *sql.DB, cfg *config.Config, log *slog.Logger) *Shows {
+func NewShows(database *db.DB, cfg *config.Config, log *slog.Logger) *Shows {
 	return &Shows{
 		db:        database,
 		cfg:       cfg,
@@ -90,28 +90,28 @@ func (s *Shows) Seasons(w http.ResponseWriter, r *http.Request) {
 		).Scan(&childCount)
 
 		out = append(out, map[string]any{
-			"Name":                   displayTitle,
-			"SortName":               displayTitle,
-			"ServerId":               s.cfg.EmbyID,
-			"Id":                     seasonID,
-			"ImageTags":              map[string]any{"Primary": seasonID},
-			"CanDelete":              false,
-			"CanDownload":            false,
-			"SupportsSync":           true,
-			"Overview":               nullStr(description),
-			"IndexNumber":            seasonNumber,
-			"IsFolder":               true,
-			"ParentId":               seriesItemID,
-			"Type":                   "Season",
-			"SeriesId":               seriesItemID,
-			"SeriesName":             videoTitle,
-			"SeriesPrimaryImageTag":  "image",
-			"Genres":                 []any{},
-			"People":                 []any{},
-			"GenreItems":             []any{},
-			"ChildCount":             childCount,
-			"Etag":                   seasonID,
-			"DateCreated":            emby.FormatTime(createdAt),
+			"Name":                  displayTitle,
+			"SortName":              displayTitle,
+			"ServerId":              s.cfg.EmbyID,
+			"Id":                    seasonID,
+			"ImageTags":             map[string]any{"Primary": seasonID},
+			"CanDelete":             false,
+			"CanDownload":           false,
+			"SupportsSync":          true,
+			"Overview":              nullStr(description),
+			"IndexNumber":           seasonNumber,
+			"IsFolder":              true,
+			"ParentId":              seriesItemID,
+			"Type":                  "Season",
+			"SeriesId":              seriesItemID,
+			"SeriesName":            videoTitle,
+			"SeriesPrimaryImageTag": "image",
+			"Genres":                []any{},
+			"People":                []any{},
+			"GenreItems":            []any{},
+			"ChildCount":            childCount,
+			"Etag":                  seasonID,
+			"DateCreated":           emby.FormatTime(createdAt),
 			"UserData": map[string]any{
 				"UnplayedItemCount":     childCount,
 				"PlaybackPositionTicks": 0,

@@ -149,7 +149,7 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 			// Also compute is_admin by checking the user record.
 			var isAdmin sql.NullBool
 			_ = deps.DB.QueryRowContext(r.Context(),
-				"SELECT is_admin FROM user WHERE id = ? LIMIT 1", userID,
+				"SELECT is_admin FROM app_user WHERE id = ? LIMIT 1", userID,
 			).Scan(&isAdmin)
 
 			ctx := ctxpkg.WithAuth(r.Context(), userID, token, isAdmin.Bool, false)

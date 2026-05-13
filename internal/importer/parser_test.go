@@ -146,13 +146,13 @@ func TestParseFilename_ProviderTags(t *testing.T) {
 
 func TestParseSeasonFolder(t *testing.T) {
 	tests := map[string]int{
-		"Season 1":   1,
-		"season 02":  2,
-		"Season_3":   3,
-		"第一季":        1,
-		"第 2 季":     2,
-		"第10季":       10,
-		"Specials":   0,
+		"Season 1":     1,
+		"season 02":    2,
+		"Season_3":     3,
+		"第一季":          1,
+		"第 2 季":        2,
+		"第10季":         10,
+		"Specials":     0,
 		"Not A Season": -1,
 	}
 	for input, want := range tests {

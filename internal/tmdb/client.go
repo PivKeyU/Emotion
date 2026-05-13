@@ -163,17 +163,17 @@ type Genre struct {
 
 // SearchResult is a single row from /search/movie or /search/tv.
 type SearchResult struct {
-	ID            int64  `json:"id"`
-	Title         string `json:"title"` // movies
-	Name          string `json:"name"`  // tv shows
-	OriginalTitle string `json:"original_title"`
-	OriginalName  string `json:"original_name"`
-	Overview      string `json:"overview"`
-	ReleaseDate   string `json:"release_date"`   // movies
-	FirstAirDate  string `json:"first_air_date"` // tv
-	PosterPath    string `json:"poster_path"`
-	BackdropPath  string `json:"backdrop_path"`
-	MediaType     string `json:"media_type"`
+	ID            int64   `json:"id"`
+	Title         string  `json:"title"` // movies
+	Name          string  `json:"name"`  // tv shows
+	OriginalTitle string  `json:"original_title"`
+	OriginalName  string  `json:"original_name"`
+	Overview      string  `json:"overview"`
+	ReleaseDate   string  `json:"release_date"`   // movies
+	FirstAirDate  string  `json:"first_air_date"` // tv
+	PosterPath    string  `json:"poster_path"`
+	BackdropPath  string  `json:"backdrop_path"`
+	MediaType     string  `json:"media_type"`
 	VoteAverage   float64 `json:"vote_average"`
 }
 

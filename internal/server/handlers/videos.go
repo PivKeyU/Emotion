@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -22,7 +21,7 @@ import (
 // Videos serves /Videos/* endpoints: direct-play redirects and subtitle resolution.
 // No transcoding; clients must do direct play.
 type Videos struct {
-	db    *sql.DB
+	db    *db.DB
 	cache cache.Cache
 	cfg   *config.Config
 	log   *slog.Logger
@@ -30,7 +29,7 @@ type Videos struct {
 }
 
 // NewVideos builds the handler.
-func NewVideos(database *sql.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Videos {
+func NewVideos(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Videos {
 	return &Videos{
 		db:    database,
 		cache: c,
@@ -85,9 +84,9 @@ func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		mediaID    int64
-		pathType   db.NullString
-		pathURL    db.NullString
+		mediaID  int64
+		pathType db.NullString
+		pathURL  db.NullString
 	)
 	err := v.db.QueryRowContext(ctx, `
 		SELECT id, path_type, path_url FROM video_media
@@ -214,7 +213,6 @@ func (v *Videos) Subtitle(w http.ResponseWriter, r *http.Request) {
 	v.cache.Set(ctx, cacheKey, subURL, cacheTTL)
 	http.Redirect(w, r, subURL, http.StatusPermanentRedirect)
 }
-
 
 // serveLocalFile streams a local file with standard HTTP Range support.
 // http.ServeFile handles Range, conditional GET, and Content-Type for us.

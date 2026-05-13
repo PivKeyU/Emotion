@@ -13,16 +13,16 @@ func TestScan_EndToEnd(t *testing.T) {
 
 	layout := map[string]string{
 		// A movie with an NFO and a poster sidecar.
-		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.mkv":      "fake",
-		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.nfo":      movieNFOSample,
-		"Movies/Wandering Earth 2 (2023)/poster.jpg":                 "img",
-		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.zh.srt":   "sub",
+		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.mkv":    "fake",
+		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.nfo":    movieNFOSample,
+		"Movies/Wandering Earth 2 (2023)/poster.jpg":               "img",
+		"Movies/Wandering Earth 2 (2023)/wandering-earth-2.zh.srt": "sub",
 
 		// A TV show with a tvshow.nfo and two episodes in "Season 1".
-		"Shows/Game of Thrones/tvshow.nfo":                           tvshowNFOSample,
-		"Shows/Game of Thrones/Season 1/got.s01e01.mkv":              "fake",
-		"Shows/Game of Thrones/Season 1/got.s01e01.nfo":              episodeNFOSample,
-		"Shows/Game of Thrones/Season 1/got.s01e02.mkv":              "fake",
+		"Shows/Game of Thrones/tvshow.nfo":              tvshowNFOSample,
+		"Shows/Game of Thrones/Season 1/got.s01e01.mkv": "fake",
+		"Shows/Game of Thrones/Season 1/got.s01e01.nfo": episodeNFOSample,
+		"Shows/Game of Thrones/Season 1/got.s01e02.mkv": "fake",
 
 		// A STRM-based movie.
 		"Movies/Cloud Movie/cloud-movie.strm": "https://cdn.example.com/cloud-movie.mkv\n",

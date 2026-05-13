@@ -30,13 +30,13 @@ import (
 //   - /Devices/Info
 //   - /user_usage_stats/submit_custom_query
 type Management struct {
-	db  *sql.DB
+	db  *db.DB
 	cfg *config.Config
 	log *slog.Logger
 }
 
 // NewManagement builds the handler.
-func NewManagement(database *sql.DB, cfg *config.Config, log *slog.Logger) *Management {
+func NewManagement(database *db.DB, cfg *config.Config, log *slog.Logger) *Management {
 	return &Management{db: database, cfg: cfg, log: log}
 }
 
@@ -55,7 +55,7 @@ func (m *Management) UsersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := m.db.QueryContext(r.Context(),
-		"SELECT id, username, is_can_down, is_admin, is_disable FROM user WHERE deleted_at IS NULL ORDER BY id ASC")
+		"SELECT id, username, is_can_down, is_admin, is_disable FROM app_user WHERE deleted_at IS NULL ORDER BY id ASC")
 	if err != nil {
 		m.log.Error("users list query failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -101,7 +101,7 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := m.db.QueryContext(r.Context(),
-		"SELECT id, username, is_can_down, is_admin, is_disable FROM user WHERE "+where+" ORDER BY id ASC",
+		"SELECT id, username, is_can_down, is_admin, is_disable FROM app_user WHERE "+where+" ORDER BY id ASC",
 		args...,
 	)
 	if err != nil {
@@ -163,7 +163,7 @@ func (m *Management) UserNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := m.db.ExecContext(r.Context(),
-		"INSERT INTO user (username, password, is_admin, is_disable) VALUES (?, ?, ?, ?)",
+		"INSERT INTO app_user (username, password, is_admin, is_disable) VALUES (?, ?, ?, ?)",
 		name, hashed, false, false,
 	)
 	if err != nil {
@@ -186,7 +186,7 @@ func (m *Management) UserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := m.db.ExecContext(r.Context(),
-		"UPDATE user SET deleted_at = NOW() WHERE id = ?", userID)
+		"UPDATE app_user SET deleted_at = NOW() WHERE id = ?", userID)
 	if err != nil {
 		m.log.Error("user delete failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -240,7 +240,7 @@ func (m *Management) UserPassword(w http.ResponseWriter, r *http.Request) {
 	// If the client indicates "reset to blank" (ResetPassword=true, no NewPw),
 	// we store an empty string hash which VerifyPassword treats as "no password".
 	_, err := m.db.ExecContext(r.Context(),
-		"UPDATE user SET password = ? WHERE id = ?", hashed, userID)
+		"UPDATE app_user SET password = ? WHERE id = ?", hashed, userID)
 	if err != nil {
 		m.log.Error("password update failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -347,7 +347,7 @@ func (m *Management) UserPolicy(w http.ResponseWriter, r *http.Request) {
 	foldersJSON, _ := json.Marshal(visibleIDs)
 
 	_, err = m.db.ExecContext(r.Context(), `
-		UPDATE user
+		UPDATE app_user
 		SET is_admin = ?, is_disable = ?, is_can_down = ?, folders = ?
 		WHERE id = ?
 	`, body.IsAdministrator, body.IsDisabled, body.EnableContentDownloading, foldersJSON, userID)
@@ -391,12 +391,12 @@ func (m *Management) DeviceInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	deviceID := r.URL.Query().Get("id")
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"Id":             deviceID,
-		"Name":           "",
-		"AppName":        "",
-		"AppVersion":     "",
-		"LastUserId":     "",
-		"LastUserName":   "",
+		"Id":               deviceID,
+		"Name":             "",
+		"AppName":          "",
+		"AppVersion":       "",
+		"LastUserId":       "",
+		"LastUserName":     "",
 		"DateLastActivity": "",
 	})
 }
@@ -431,7 +431,7 @@ func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 		rows, err := m.db.QueryContext(ctx, `
 			SELECT user_id, SUM(play_duration - pause_duration) AS WatchTime
 			FROM playback_activity
-			WHERE date_created >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+			WHERE date_created >= now() - interval '7 days'
 			GROUP BY user_id
 			ORDER BY WatchTime DESC
 		`)
@@ -462,7 +462,7 @@ func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 			_ = m.db.QueryRowContext(ctx, `
 				SELECT MAX(date_created), SUM(play_duration - pause_duration) / 60
 				FROM playback_activity
-				WHERE user_id = ? AND date_created >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+				WHERE user_id = ? AND date_created >= now() - interval '7 days'
 			`, userID).Scan(&lastLogin, &watchTime)
 			row := map[string]any{}
 			if lastLogin.Valid {
@@ -488,12 +488,12 @@ func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmin, isDisable bool) map[string]any {
 	embyID := strconv.FormatInt(id, 10)
 	return map[string]any{
-		"Name":          username,
-		"ServerId":      cfg.EmbyID,
-		"Id":            embyID,
-		"HasPassword":   true,
+		"Name":                  username,
+		"ServerId":              cfg.EmbyID,
+		"Id":                    embyID,
+		"HasPassword":           true,
 		"HasConfiguredPassword": true,
-		"Configuration": map[string]any{},
+		"Configuration":         map[string]any{},
 		"Policy": map[string]any{
 			"IsAdministrator":          isAdmin,
 			"IsDisabled":               isDisable,

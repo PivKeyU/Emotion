@@ -22,7 +22,7 @@ import (
 
 // Items serves /Items/* endpoints.
 type Items struct {
-	db        *sql.DB
+	db        *db.DB
 	cache     cache.Cache
 	cfg       *config.Config
 	log       *slog.Logger
@@ -30,7 +30,7 @@ type Items struct {
 }
 
 // NewItems builds the handler.
-func NewItems(database *sql.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Items {
+func NewItems(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Items {
 	return &Items{
 		db:        database,
 		cache:     c,
@@ -68,7 +68,8 @@ func (i *Items) Counts(w http.ResponseWriter, r *http.Request) {
 		"SELECT COUNT(*) FROM video_list WHERE video_type = ? AND deleted_at IS NULL",
 		db.VideoTypeMovie).Scan(&movie)
 	_ = i.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM video_season WHERE deleted_at IS NULL").Scan(&series)
+		"SELECT COUNT(*) FROM video_list WHERE video_type = ? AND deleted_at IS NULL",
+		db.VideoTypeTV).Scan(&series)
 	_ = i.db.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM video_episode WHERE deleted_at IS NULL").Scan(&episode)
 
@@ -218,7 +219,7 @@ func (i *Items) PlaybackInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // hasProgress reports whether a user_video_record row already exists.
-func hasProgress(ctx context.Context, d *sql.DB, userID, videoListID int64, videoEpisodeID db.NullInt64) (bool, error) {
+func hasProgress(ctx context.Context, d *db.DB, userID, videoListID int64, videoEpisodeID db.NullInt64) (bool, error) {
 	query := "SELECT id FROM user_video_record WHERE user_id = ? AND video_list_id = ?"
 	args := []any{userID, videoListID}
 	if videoEpisodeID.Valid {

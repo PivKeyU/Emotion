@@ -2,17 +2,17 @@
 package server
 
 import (
-	"database/sql"
 	"log/slog"
 
 	"github.com/PivKeyU/Emotion/internal/cache"
 	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
 )
 
 // Dependencies is the set of shared services injected into handlers.
 type Dependencies struct {
 	Config *config.Config
-	DB     *sql.DB
+	DB     *db.DB
 	Cache  cache.Cache
 	Logger *slog.Logger
 }

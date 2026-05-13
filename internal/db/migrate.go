@@ -1,265 +1,232 @@
 package db
 
-import (
-	"database/sql"
-	"fmt"
-)
+import "fmt"
 
-// migrations is the ordered set of DDL statements applied at startup.
-// Each statement is idempotent (IF NOT EXISTS) so running repeatedly is safe.
-// Schema mirrors emya (src/db/schema/*).
+// migrations is the ordered set of PostgreSQL DDL statements applied at startup.
+// Each statement is idempotent so running repeatedly is safe.
 var migrations = []string{
-	// library
 	`CREATE TABLE IF NOT EXISTS library (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		name VARCHAR(255) NOT NULL,
-		role VARCHAR(255) NULL,
-		PRIMARY KEY (id),
-		KEY idx_library_name (name)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		role VARCHAR(255) NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_library_name ON library (name)`,
 
-	// user
-	`CREATE TABLE IF NOT EXISTS user (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+	`CREATE TABLE IF NOT EXISTS app_user (
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		username VARCHAR(255) NULL,
 		password VARCHAR(255) NULL,
-		folders JSON NULL,
+		folders JSONB NULL,
 		is_can_down BOOLEAN NULL,
 		is_admin BOOLEAN NULL,
 		is_disable BOOLEAN NULL,
 		remark VARCHAR(255) NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_user (username)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		CONSTRAINT unx_user UNIQUE (username)
+	)`,
 
-	// token
 	`CREATE TABLE IF NOT EXISTS token (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		token VARCHAR(64) NOT NULL,
-		user_id BIGINT UNSIGNED NOT NULL,
+		user_id BIGINT NOT NULL,
 		device_client VARCHAR(255) NULL,
 		device_name VARCHAR(255) NULL,
 		device_id VARCHAR(255) NULL,
 		device_version VARCHAR(255) NULL,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		last_used_at TIMESTAMP NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY uni_token (token),
-		KEY idx_token_user_id (user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_used_at TIMESTAMPTZ NULL,
+		CONSTRAINT uni_token UNIQUE (token)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_token_user_id ON token (user_id)`,
 
-	// favorites
 	`CREATE TABLE IF NOT EXISTS favorites (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+		id BIGSERIAL PRIMARY KEY,
 		relation_type VARCHAR(255) NOT NULL,
-		relation_id BIGINT UNSIGNED NOT NULL,
-		user_id BIGINT UNSIGNED NOT NULL,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_favorites (relation_type, relation_id, user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		relation_id BIGINT NOT NULL,
+		user_id BIGINT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		CONSTRAINT unx_favorites UNIQUE (relation_type, relation_id, user_id)
+	)`,
 
-	// user_video_record
 	`CREATE TABLE IF NOT EXISTS user_video_record (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		video_list_id BIGINT UNSIGNED NOT NULL,
-		video_season_id BIGINT UNSIGNED NULL,
-		video_episode_id BIGINT UNSIGNED NULL,
-		video_media_id BIGINT UNSIGNED NULL,
-		play_seconds BIGINT UNSIGNED NULL,
+		id BIGSERIAL PRIMARY KEY,
+		video_list_id BIGINT NOT NULL,
+		video_season_id BIGINT NULL,
+		video_episode_id BIGINT NULL,
+		video_media_id BIGINT NULL,
+		play_seconds BIGINT NULL,
 		is_complete BOOLEAN NULL,
-		user_id BIGINT UNSIGNED NOT NULL,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		PRIMARY KEY (id),
-		KEY idx_uvr_list (video_list_id),
-		KEY idx_uvr_season (video_season_id),
-		KEY idx_uvr_episode (video_episode_id),
-		KEY idx_uvr_media (video_media_id),
-		KEY idx_uvr_user (user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		user_id BIGINT NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_list ON user_video_record (video_list_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_season ON user_video_record (video_season_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_episode ON user_video_record (video_episode_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_media ON user_video_record (video_media_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_user ON user_video_record (user_id)`,
 
-	// video_list
 	`CREATE TABLE IF NOT EXISTS video_list (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
-		video_library_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
+		video_library_id BIGINT NOT NULL,
 		video_type VARCHAR(32) NOT NULL,
 		tmdb_id VARCHAR(255) NULL,
 		title VARCHAR(255) NOT NULL,
 		origin_title VARCHAR(255) NULL,
 		description TEXT NULL,
 		tagline TEXT NULL,
-		genres JSON NULL,
-		peoples JSON NULL,
+		genres JSONB NULL,
+		peoples JSONB NULL,
 		upcoming VARCHAR(255) NULL,
 		date_air DATE NULL,
-		runtime SMALLINT UNSIGNED NULL,
+		runtime INTEGER NULL,
 		remark VARCHAR(255) NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_list (video_type, tmdb_id),
-		KEY idx_vl_library (video_library_id),
-		KEY idx_vl_title (title),
-		KEY idx_vl_origin_title (origin_title),
-		KEY idx_vl_date_air (date_air),
-		KEY idx_vl_updated (updated_at),
-		KEY idx_vl_deleted (deleted_at)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		CONSTRAINT unx_list UNIQUE (video_type, tmdb_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_library ON video_list (video_library_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_title ON video_list (title)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_origin_title ON video_list (origin_title)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_date_air ON video_list (date_air)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_updated ON video_list (updated_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_deleted ON video_list (deleted_at)`,
 
-	// video_list_title_alias
 	`CREATE TABLE IF NOT EXISTS video_list_title_alias (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
-		video_list_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
+		video_list_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL,
-		user_id BIGINT UNSIGNED NULL,
-		PRIMARY KEY (id),
-		KEY idx_vlta_list (video_list_id),
-		KEY idx_vlta_title (title),
-		KEY idx_vlta_deleted (deleted_at)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		user_id BIGINT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vlta_list ON video_list_title_alias (video_list_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vlta_title ON video_list_title_alias (title)`,
+	`CREATE INDEX IF NOT EXISTS idx_vlta_deleted ON video_list_title_alias (deleted_at)`,
 
-	// video_season
 	`CREATE TABLE IF NOT EXISTS video_season (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
-		video_list_id BIGINT UNSIGNED NOT NULL,
-		season_number BIGINT UNSIGNED NOT NULL,
-		season_number_custom BIGINT UNSIGNED NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
+		video_list_id BIGINT NOT NULL,
+		season_number BIGINT NOT NULL,
+		season_number_custom BIGINT NULL,
 		title VARCHAR(255) NOT NULL,
 		description TEXT NULL,
 		date_air DATE NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_season (video_list_id, season_number)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		CONSTRAINT unx_season UNIQUE (video_list_id, season_number)
+	)`,
 
-	// video_episode
 	`CREATE TABLE IF NOT EXISTS video_episode (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
-		video_list_id BIGINT UNSIGNED NOT NULL,
-		video_season_id BIGINT UNSIGNED NOT NULL,
-		episode_number BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
+		video_list_id BIGINT NOT NULL,
+		video_season_id BIGINT NOT NULL,
+		episode_number BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL,
 		description TEXT NULL,
 		date_air DATE NULL,
-		runtime SMALLINT UNSIGNED NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_episode (video_list_id, video_season_id, episode_number),
-		KEY idx_ve_season (video_season_id),
-		KEY idx_ve_date_air (date_air)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		runtime INTEGER NULL,
+		CONSTRAINT unx_episode UNIQUE (video_list_id, video_season_id, episode_number)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_ve_season ON video_episode (video_season_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_ve_date_air ON video_episode (date_air)`,
 
-	// video_image
 	`CREATE TABLE IF NOT EXISTS video_image (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		type VARCHAR(64) NOT NULL,
 		relation_type VARCHAR(64) NOT NULL,
-		relation_id BIGINT UNSIGNED NOT NULL,
+		relation_id BIGINT NOT NULL,
 		path_type VARCHAR(64) NULL,
 		path_url TEXT NULL,
-		user_id BIGINT UNSIGNED NULL,
-		PRIMARY KEY (id),
-		KEY idx_vi_rel (relation_type, relation_id),
-		KEY idx_vi_user (user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		user_id BIGINT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vi_rel ON video_image (relation_type, relation_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vi_user ON video_image (user_id)`,
 
-	// video_media
 	`CREATE TABLE IF NOT EXISTS video_media (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		uuid CHAR(36) NOT NULL,
-		video_list_id BIGINT UNSIGNED NOT NULL,
-		video_season_id BIGINT UNSIGNED NULL,
-		video_episode_id BIGINT UNSIGNED NULL,
+		video_list_id BIGINT NOT NULL,
+		video_season_id BIGINT NULL,
+		video_episode_id BIGINT NULL,
 		name VARCHAR(255) NOT NULL,
 		status VARCHAR(32) NOT NULL,
-		file_size BIGINT UNSIGNED NULL,
-		file_second BIGINT UNSIGNED NULL,
-		file_matadata JSON NULL,
+		file_size BIGINT NULL,
+		file_second BIGINT NULL,
+		file_matadata JSONB NULL,
 		file_container VARCHAR(64) NULL,
-		file_chapters JSON NULL,
+		file_chapters JSONB NULL,
 		path_type VARCHAR(64) NULL,
 		path_url TEXT NULL,
-		user_id BIGINT UNSIGNED NULL,
-		number_view BIGINT UNSIGNED NOT NULL DEFAULT 0,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_media_uuid (uuid),
-		KEY idx_vm_user (user_id),
-		KEY idx_vm_list (video_list_id),
-		KEY idx_vm_season (video_season_id),
-		KEY idx_vm_episode (video_episode_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		user_id BIGINT NULL,
+		number_view BIGINT NOT NULL DEFAULT 0,
+		CONSTRAINT unx_media_uuid UNIQUE (uuid)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_user ON video_media (user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_list ON video_media (video_list_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_season ON video_media (video_season_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_episode ON video_media (video_episode_id)`,
 
-	// video_subtitle
 	`CREATE TABLE IF NOT EXISTS video_subtitle (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
-		video_media_id BIGINT UNSIGNED NOT NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
+		video_media_id BIGINT NOT NULL,
 		title VARCHAR(255) NOT NULL,
 		codec VARCHAR(64) NOT NULL,
 		path_type VARCHAR(64) NULL,
 		path_url TEXT NULL,
-		user_id BIGINT UNSIGNED NULL,
-		PRIMARY KEY (id),
-		KEY idx_vs_media (video_media_id),
-		KEY idx_vs_user (user_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		user_id BIGINT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vs_media ON video_subtitle (video_media_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vs_user ON video_subtitle (user_id)`,
 
-	// video_genre
 	`CREATE TABLE IF NOT EXISTS video_genre (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		tmdb_id VARCHAR(255) NOT NULL,
 		name VARCHAR(255) NOT NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_genre (tmdb_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		CONSTRAINT unx_genre UNIQUE (tmdb_id)
+	)`,
 
-	// video_people
 	`CREATE TABLE IF NOT EXISTS video_people (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		deleted_at TIMESTAMP NULL,
+		id BIGSERIAL PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		deleted_at TIMESTAMPTZ NULL,
 		tmdb_id VARCHAR(255) NOT NULL,
 		type VARCHAR(64) NOT NULL,
 		name VARCHAR(255) NOT NULL,
 		original_name VARCHAR(255) NULL,
-		gender TINYINT UNSIGNED NOT NULL DEFAULT 0,
+		gender SMALLINT NOT NULL DEFAULT 0,
 		description TEXT NULL,
 		birthday DATE NULL,
 		deathday DATE NULL,
-		PRIMARY KEY (id),
-		UNIQUE KEY unx_people (tmdb_id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		CONSTRAINT unx_people UNIQUE (tmdb_id)
+	)`,
 
-	// playback_activity (for user_usage_stats plugin compatibility)
 	`CREATE TABLE IF NOT EXISTS playback_activity (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-		date_created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		id BIGSERIAL PRIMARY KEY,
+		date_created TIMESTAMPTZ NOT NULL DEFAULT now(),
 		user_id VARCHAR(64) NOT NULL,
 		item_id VARCHAR(64) NULL,
 		item_type VARCHAR(64) NULL,
@@ -268,15 +235,14 @@ var migrations = []string{
 		client VARCHAR(64) NULL,
 		device_name VARCHAR(255) NULL,
 		play_duration BIGINT NOT NULL DEFAULT 0,
-		pause_duration BIGINT NOT NULL DEFAULT 0,
-		PRIMARY KEY (id),
-		KEY idx_pa_user (user_id),
-		KEY idx_pa_date (date_created)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		pause_duration BIGINT NOT NULL DEFAULT 0
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_pa_user ON playback_activity (user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_pa_date ON playback_activity (date_created)`,
 }
 
 // Migrate applies the schema. Safe to call every startup.
-func Migrate(d *sql.DB) error {
+func Migrate(d *DB) error {
 	for i, stmt := range migrations {
 		if _, err := d.Exec(stmt); err != nil {
 			return fmt.Errorf("migration #%d failed: %w", i, err)

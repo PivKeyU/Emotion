@@ -25,17 +25,17 @@ type Library struct {
 
 // User mirrors the `user` table.
 type User struct {
-	ID         int64
-	Username   NullString
-	Password   NullString
-	Folders    NullString // raw JSON
-	IsCanDown  NullBool
-	IsAdmin    NullBool
-	IsDisable  NullBool
-	Remark     NullString
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	DeletedAt  NullTime
+	ID        int64
+	Username  NullString
+	Password  NullString
+	Folders   NullString // raw JSON
+	IsCanDown NullBool
+	IsAdmin   NullBool
+	IsDisable NullBool
+	Remark    NullString
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt NullTime
 }
 
 // Token mirrors the `token` table.

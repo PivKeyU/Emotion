@@ -1,24 +1,24 @@
 package handlers
 
 import (
-	"database/sql"
 	"log/slog"
 	"net/http"
 
 	"github.com/PivKeyU/Emotion/internal/config"
+	"github.com/PivKeyU/Emotion/internal/db"
 	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
 // Library serves /Library/* endpoints.
 type Library struct {
-	db        *sql.DB
+	db        *db.DB
 	cfg       *config.Config
 	log       *slog.Logger
 	transform *Transform
 }
 
 // NewLibrary builds the handler.
-func NewLibrary(database *sql.DB, cfg *config.Config, log *slog.Logger) *Library {
+func NewLibrary(database *db.DB, cfg *config.Config, log *slog.Logger) *Library {
 	return &Library{
 		db:        database,
 		cfg:       cfg,

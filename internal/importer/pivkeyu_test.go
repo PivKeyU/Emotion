@@ -9,11 +9,11 @@ import (
 // real-world strm redirect URLs served by strm.pivkeyu.com.
 //
 // Properties we check:
-//   1. The URL is classified as a URL (not a local path).
-//   2. The Primary field preserves the entire URL byte-for-byte, including
-//      UTF-8 Chinese path components, square brackets, and query params.
-//   3. url.Parse can extract scheme / host / query so 302 redirects work.
-//   4. BOM-prefixed content and multi-line STRM files are handled correctly.
+//  1. The URL is classified as a URL (not a local path).
+//  2. The Primary field preserves the entire URL byte-for-byte, including
+//     UTF-8 Chinese path components, square brackets, and query params.
+//  3. url.Parse can extract scheme / host / query so 302 redirects work.
+//  4. BOM-prefixed content and multi-line STRM files are handled correctly.
 func TestParseSTRM_PivKeyURedirect(t *testing.T) {
 	const raw = "https://strm.pivkeyu.com/redirect?path=/Media/Video/Movie/动画电影/A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]/安彦良和・板野一郎原画摄影集.2014.mp4&pickcode=bdgcvu6389rm784qw"
 
