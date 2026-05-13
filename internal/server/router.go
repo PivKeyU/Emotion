@@ -128,4 +128,14 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 
 	// user_usage_stats (sakura-embyboss)
 	r.Post(prefix+"/user_usage_stats/submit_custom_query", mgmt.UsageStatsQuery)
+
+	// --- admin (manual library management) ---
+	// These sit under /admin (no /emby prefix parity — they're native to Next-Emby).
+	if prefix == "" {
+		admin := handlers.NewAdmin(deps.DB, deps.Config, deps.Logger)
+		r.Get("/admin/libraries", admin.LibrariesList)
+		r.Post("/admin/libraries", admin.LibraryCreate)
+		r.Delete("/admin/libraries/{id}", admin.LibraryDelete)
+		r.Post("/admin/library/scan", admin.LibraryScan)
+	}
 }

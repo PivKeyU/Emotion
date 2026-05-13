@@ -108,6 +108,11 @@ func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 	switch pathType.String {
 	case db.PathTypeURL:
 		playURL = pathURL.String
+	case db.PathTypeLocal:
+		// Serve the file directly with Range support. No caching of the result URL
+		// since we're streaming bytes, not redirecting.
+		v.serveLocalFile(w, r, pathURL.String)
+		return
 	default:
 		if v.ext.Enabled() {
 			resp, err := v.ext.Post(ctx, "/emby/videoGetUrl", map[string]any{
@@ -177,6 +182,9 @@ func (v *Videos) Subtitle(w http.ResponseWriter, r *http.Request) {
 	switch pathType.String {
 	case db.PathTypeURL:
 		subURL = pathURL.String
+	case db.PathTypeLocal:
+		v.serveLocalFile(w, r, pathURL.String)
+		return
 	default:
 		if v.ext.Enabled() {
 			resp, err := v.ext.Post(ctx, "/emby/subtitleGetUrl", map[string]any{
@@ -205,4 +213,23 @@ func (v *Videos) Subtitle(w http.ResponseWriter, r *http.Request) {
 	}
 	v.cache.Set(ctx, cacheKey, subURL, cacheTTL)
 	http.Redirect(w, r, subURL, http.StatusPermanentRedirect)
+}
+
+
+// serveLocalFile streams a local file with standard HTTP Range support.
+// http.ServeFile handles Range, conditional GET, and Content-Type for us.
+// We intentionally don't sandbox the path here because the only way a local
+// path enters video_media is via the admin-only import flow — trusted input.
+func (v *Videos) serveLocalFile(w http.ResponseWriter, r *http.Request, absPath string) {
+	info, err := osStat(absPath)
+	if err != nil {
+		v.log.Warn("local file missing", "path", absPath, "err", err)
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	if info.IsDir() {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	http.ServeFile(w, r, absPath)
 }

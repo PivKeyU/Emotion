@@ -134,6 +134,15 @@ func (i *Items) Image(w http.ResponseWriter, r *http.Request) {
 		url = "https://image.tmdb.org/t/p/w400" + pathURL.String
 	case db.ImagePathTypeDouban:
 		// Douban URLs are usually stored verbatim; keep as-is.
+	case db.PathTypeLocal:
+		// Serve the file directly; don't redirect.
+		info, err := osStat(url)
+		if err != nil || info.IsDir() {
+			WriteStatus(w, http.StatusNotFound)
+			return
+		}
+		http.ServeFile(w, r, url)
+		return
 	}
 
 	if url == "" {

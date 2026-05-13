@@ -100,16 +100,143 @@ Next-Emby 启动时会自动执行 `internal/db/migrate.go` 里的建表 DDL，
 
 ## 数据导入
 
-前期建议直接写 MySQL。核心数据流：
+Next-Emby 支持**两种**入库方式:
+
+### 方式 1:自动扫描(推荐)
+
+准备好目录结构,调 `/admin/library/scan` 让服务端自己扫:
+
+```bash
+# 先建媒体库
+curl -X POST 'http://localhost:8096/admin/libraries?api_key=YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"电影库","role":"public"}'
+# 返回 {"id": 1, ...}
+
+# 扫描目录入库
+curl -X POST 'http://localhost:8096/admin/library/scan?api_key=YOUR_API_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "library_id": 1,
+    "root": "/data/movies",
+    "default_type": "movie"
+  }'
+```
+
+**支持的文件类型**:
+- **视频**: `.mkv .mp4 .m4v .ts .avi .mov .wmv .flv .webm .iso .rmvb`
+- **STRM**: `.strm` (URL 指针或本地路径,支持注释行、多备份源、BOM)
+- **NFO 元数据**: Emby/Jellyfin/Kodi 标准格式
+- **图片**: `poster.jpg` / `fanart.jpg` / `folder.jpg` / `backdrop.jpg` / `logo.jpg` / `thumb.jpg`
+- **字幕**: `.srt .ass .vtt .ssa .sub` (与同名视频自动关联)
+
+**识别规则**:
+- `Title (2023).mkv` 或 `Title [2023].mkv` 被识别为电影
+- `Show.S01E02.mkv` / `Show 1x02.mkv` / `Show E07.mkv` 被识别为剧集
+- 父目录是 `Season 1` / `第一季` / `第 1 季` 时推断为剧集
+- 存在 `tvshow.nfo` 时所在目录视为一部剧
+- 无法识别时由 `default_type` 兜底 (`movie` 或 `tv`)
+
+**推荐目录结构**:
+
+```
+/data/movies/
+  流浪地球 2 (2023)/
+    wandering-earth-2.mkv
+    wandering-earth-2.nfo       # 元数据
+    poster.jpg                  # 封面
+    fanart.jpg                  # 背景
+    wandering-earth-2.zh.srt    # 字幕(自动关联)
+  Cloud Movie/
+    cloud-movie.strm            # URL 指向云端
+    cloud-movie.nfo
+
+/data/tvs/
+  Game of Thrones/
+    tvshow.nfo                  # 整部剧的元数据
+    poster.jpg
+    Season 1/
+      got.s01e01.mkv
+      got.s01e01.nfo            # 每集元数据(可选)
+      got.s01e02.mkv
+```
+
+**NFO 元数据示例** (`movie.nfo` 或 `{basename}.nfo`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>流浪地球 2</title>
+  <originaltitle>The Wandering Earth II</originaltitle>
+  <plot>太阳即将毁灭,人类面临流浪危机...</plot>
+  <year>2023</year>
+  <premiered>2023-01-22</premiered>
+  <runtime>173</runtime>
+  <uniqueid type="tmdb" default="true">693134</uniqueid>
+  <uniqueid type="imdb">tt15302324</uniqueid>
+  <genre>科幻</genre>
+  <genre>动作</genre>
+  <art>
+    <poster>https://image.tmdb.org/t/p/w400/poster.jpg</poster>
+    <fanart>https://image.tmdb.org/t/p/original/backdrop.jpg</fanart>
+  </art>
+</movie>
+```
+
+剧集的 NFO 用 `<tvshow>` (整部剧)、`<episodedetails>` (单集)、`<season>` (季)。
+支持的标签:`title`, `originaltitle`, `plot`, `outline`, `tagline`, `year`,
+`runtime`, `premiered`/`aired`/`releasedate`, `season`, `episode`, `genre`,
+`tag`, `studio`, `director`, `credits`, `actor`, `uniqueid type="..."`,
+`tmdbid`/`imdbid`/`tvdbid`, `thumb aspect="..."`, `fanart/thumb`,
+`art/poster`, `art/fanart`。
+
+**支持的 STRM 格式**:
+
+```
+# 单行 URL (最常见)
+https://cdn.example.com/movie.mkv
+
+# 多行带备份源和注释
+# 主线路
+https://primary.example.com/movie.mkv
+https://fallback.example.com/movie.mkv
+
+# 本地绝对路径
+/mnt/media/movie.mkv
+
+# 相对路径 (相对 STRM 文件所在目录)
+../backup/movie.mkv
+
+# Kodi plugin URL (透传)
+plugin://plugin.video.example/play?id=123
+
+# 云盘签名 URL (每次播放时动态解析)
+https://pan.example.com/redirect?fid=abc&sign=def
+```
+
+扫描是**幂等**的 —— 重复跑同一个目录只会更新元数据,不会重复入库。
+
+### 方式 2:直接写 MySQL
+
+如果有自己的爬虫/刮削流水线,可以绕开扫描器直接写表。表结构:
 
 1. `library` —— 媒体库
 2. `video_list` —— 每部电影/剧
 3. `video_season` + `video_episode` —— 剧集的季/集
-4. `video_media` —— 播放地址（`path_type='url'` + `path_url='https://...'`）
+4. `video_media` —— 播放地址 (`path_type='url'`/`'local'` + `path_url`)
 5. `video_subtitle` —— 可选字幕
-6. `video_image` —— 封面/剧照（`type='Primary'/'Backdrop'/...`）
+6. `video_image` —— 封面/剧照 (`type='Primary'/'Backdrop'/...`)
 
 然后通过管理 API 创建用户 + 分配可见媒体库即可。
+
+## 管理 API 速查
+
+| 端点 | 用途 |
+|------|------|
+| `GET  /admin/libraries` | 列出所有媒体库 |
+| `POST /admin/libraries` | 创建媒体库 `{"name":"...","role":"..."}` |
+| `DELETE /admin/libraries/{id}` | 软删除媒体库 |
+| `POST /admin/library/scan` | 扫描目录入库(见上) |
 
 ## Sakura_embyboss 集成
 
