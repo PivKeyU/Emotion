@@ -1,31 +1,26 @@
 # Emotion
 
-Emotion is a lightweight Emby-compatible media backend written in Go. It provides
-common Emby HTTP APIs, local media library scanning, TMDB metadata scraping, a
-single-file admin dashboard, and management endpoints used by third-party tools.
+Emotion 是一个使用 Go 编写的轻量级 Emby 兼容媒体后端。它提供常用的 Emby HTTP API、本地媒体库扫描、TMDB 元数据刮削、单文件管理后台，以及第三方工具常用的媒体库管理接口。
 
-The project is designed for users who want an Emby-like API surface without
-running the full Emby server.
+本项目适合希望获得类似 Emby 的 API 能力，但不想运行完整 Emby Server 的用户。
 
-## Features
+## 功能特性
 
-- Emby-compatible login, users, libraries, items, images, playback info,
-  sessions, favorites and played-state APIs.
-- Local media scan and import for movies, TV shows, episodes, subtitles and
-  STRM files.
-- PostgreSQL storage with automatic schema migration.
-- Optional Valkey/Redis cache.
-- TMDB scraping with v3 API key or v4 bearer token support.
-- Batch TMDB refresh with progress polling and parallel workers.
-- Admin dashboard at `/admin/ui`.
-- Media list pagination with page sizes `30`, `50`, and `100`.
-- Filters for media missing posters, metadata, or either.
-- Manual metadata editing from the admin dashboard.
-- One-click scraping for media missing posters or metadata.
-- MoviePilot-oriented Emby management endpoints.
-- MediaVault-oriented Emby media library management compatibility.
+- 兼容 Emby 的登录、用户、媒体库、项目、图片、播放信息、会话、收藏和已播放状态 API。
+- 支持电影、剧集、分集、字幕和 STRM 文件的本地扫描与导入。
+- 使用 PostgreSQL 存储数据，并支持自动数据库结构迁移。
+- 可选 Valkey/Redis 缓存。
+- 支持 TMDB v3 API Key 或 v4 Bearer Token。
+- 支持批量 TMDB 刷新、进度轮询和并发刮削。
+- 内置管理后台，地址为 `/admin/ui`。
+- 媒体列表支持 `30`、`50`、`100` 条分页。
+- 支持筛选缺少海报、缺少元数据或两者任一缺失的媒体。
+- 支持在管理后台手动编辑元数据。
+- 支持一键刮削缺少海报或元数据的媒体。
+- 提供面向 MoviePilot 的 Emby 媒体库管理接口。
+- 提供面向 MediaVault 的 Emby 媒体库管理兼容能力。
 
-## Quick Start
+## 快速开始
 
 ```bash
 git clone https://github.com/PivKeyU/Emotion.git
@@ -33,82 +28,79 @@ cd Emotion
 docker compose up -d --build
 ```
 
-The default service URL is:
+默认服务地址：
 
 ```text
 http://localhost:8096
 ```
 
-Open the admin dashboard:
+管理后台地址：
 
 ```text
 http://localhost:8096/admin/ui
 ```
 
-The default Docker Compose admin key is configured in `docker-compose.yml`:
+Docker Compose 默认管理密钥配置在 `docker-compose.yml` 中：
 
 ```text
 change-me-please
 ```
 
-Change `API_KEY` before exposing the service.
+在公网或局域网暴露服务前，请务必修改 `API_KEY`。
 
 ## Docker Compose
 
-The included `docker-compose.yml` starts:
+仓库内置的 `docker-compose.yml` 会启动：
 
-- `emotion`: the Go backend
-- `postgres`: PostgreSQL 16
-- `valkey`: in-memory cache
+- `emotion`：Go 后端服务
+- `postgres`：PostgreSQL 16
+- `valkey`：内存缓存服务
 
-By default, local `./data` is mounted into the container as `/data`:
+默认情况下，本地 `./data` 会以只读方式挂载到容器内的 `/data`：
 
 ```yaml
 volumes:
   - ./data:/data:ro
 ```
 
-When scanning a library from the admin UI or API, use the container path, for
-example:
+在管理后台或 API 中扫描媒体库时，请使用容器内路径，例如：
 
 ```text
 /data/movies
 /data/tv
 ```
 
-## Configuration
+## 配置说明
 
-Important environment variables:
+常用环境变量：
 
-| Variable | Description |
+| 变量 | 说明 |
 | --- | --- |
-| `API_KEY` | Admin API key used by the dashboard and third-party tools. |
-| `SERVER_PORT` | HTTP port, default `8096`. |
-| `DB_DRIVER` | Database driver. Use `postgres`. |
-| `DB_HOST` | PostgreSQL host. |
-| `DB_DATABASE` | PostgreSQL database name. |
-| `DB_USERNAME` | PostgreSQL user. |
-| `DB_PASSWORD` | PostgreSQL password. |
-| `VALKEY_HOST` | Optional Valkey/Redis host. |
-| `TMDB_API_KEY` | Optional TMDB v3 key or v4 bearer token. |
-| `TMDB_LANGUAGE` | TMDB language, default `zh-CN`. |
-| `TMDB_AUTO_SCRAPE` | Automatically scrape touched items after import. |
-| `EMBY_VERSION` | Version string returned to Emby clients. |
-| `EMBY_ID` | Server ID returned to Emby clients. |
+| `API_KEY` | 管理后台和第三方工具使用的管理 API Key。 |
+| `SERVER_PORT` | HTTP 服务端口，默认 `8096`。 |
+| `DB_DRIVER` | 数据库驱动，请使用 `postgres`。 |
+| `DB_HOST` | PostgreSQL 主机地址。 |
+| `DB_DATABASE` | PostgreSQL 数据库名。 |
+| `DB_USERNAME` | PostgreSQL 用户名。 |
+| `DB_PASSWORD` | PostgreSQL 密码。 |
+| `VALKEY_HOST` | 可选的 Valkey/Redis 主机地址。 |
+| `TMDB_API_KEY` | 可选的 TMDB v3 Key 或 v4 Bearer Token。 |
+| `TMDB_LANGUAGE` | TMDB 语言，默认 `zh-CN`。 |
+| `TMDB_AUTO_SCRAPE` | 导入后是否自动刮削更新过的媒体。 |
+| `EMBY_VERSION` | 返回给 Emby 客户端的版本号。 |
+| `EMBY_ID` | 返回给 Emby 客户端的服务器 ID。 |
 
-## Media Library Scanning
+## 媒体库扫描
 
-Create a media library in the admin dashboard, then scan a path mounted inside
-the container.
+先在管理后台创建媒体库，然后扫描容器内已经挂载的媒体路径。
 
-Supported media extensions include common video files and STRM files. Folder or
-file names can include a TMDB hint:
+支持常见视频文件和 STRM 文件。目录名或文件名可以包含 TMDB 提示：
 
 ```text
 The Wandering Earth II (2023) [tmdb=693134]/
 ```
 
-Example API call:
+同步扫描 API 示例：
 
 ```bash
 curl -X POST "http://localhost:8096/admin/library/scan?api_key=change-me-please" \
@@ -116,7 +108,7 @@ curl -X POST "http://localhost:8096/admin/library/scan?api_key=change-me-please"
   -d '{"library_id":1,"root":"/data/movies","default_type":"movie","scrape":"on"}'
 ```
 
-For long scans, use the async API:
+如果扫描耗时较长，可以使用异步扫描 API：
 
 ```bash
 curl -X POST "http://localhost:8096/admin/library/scan/start?api_key=change-me-please" \
@@ -124,20 +116,17 @@ curl -X POST "http://localhost:8096/admin/library/scan/start?api_key=change-me-p
   -d '{"library_id":1,"root":"/data/movies","default_type":"movie","scrape":"on"}'
 ```
 
-Then poll:
+随后轮询任务进度：
 
 ```text
 GET /admin/library/scan/{job_id}?api_key=...
 ```
 
-## TMDB Metadata
+## TMDB 元数据
 
-TMDB metadata is stored in PostgreSQL tables such as `video_list`,
-`video_season`, `video_episode`, and `video_image`. Poster and backdrop image
-records are stored as image metadata and served through Emby-compatible image
-routes.
+TMDB 元数据会存储在 PostgreSQL 的 `video_list`、`video_season`、`video_episode`、`video_image` 等表中。海报和背景图会以图片元数据形式保存，并通过兼容 Emby 的图片路由对外提供。
 
-Common admin APIs:
+常用管理 API：
 
 ```text
 GET  /admin/tmdb/settings
@@ -149,31 +138,31 @@ POST /admin/tmdb/refresh-all/start
 GET  /admin/tmdb/refresh-all/{job_id}
 ```
 
-The async batch scraper reports:
+异步批量刮削会返回以下进度信息：
 
-- total items
-- processed items
-- remaining items
-- matched items
-- skipped items
-- failed items
+- 总数量
+- 已处理数量
+- 剩余数量
+- 匹配数量
+- 跳过数量
+- 失败数量
 
-The admin UI refreshes this progress while scraping is running.
+管理后台会在刮削运行时自动刷新进度。
 
-## Admin Media Management
+## 管理后台媒体管理
 
-The admin dashboard supports:
+管理后台支持：
 
-- Page size selection: `30`, `50`, `100`
-- Search
-- Type filtering
-- Missing poster filtering
-- Missing metadata filtering
-- One-click scrape missing media
-- Manual metadata editing
-- Per-item TMDB refresh
+- 分页条数选择：`30`、`50`、`100`
+- 搜索
+- 媒体类型筛选
+- 缺少海报筛选
+- 缺少元数据筛选
+- 一键刮削缺失媒体
+- 手动编辑元数据
+- 单个媒体 TMDB 刷新
 
-Useful APIs:
+常用 API：
 
 ```text
 GET   /admin/media
@@ -182,15 +171,15 @@ PATCH /admin/media/{id}
 GET   /admin/media/{id}/children
 ```
 
-## Emby Client Usage
+## Emby 客户端使用
 
-Use Emotion as the server address in an Emby-compatible client:
+在兼容 Emby 的客户端中，将服务器地址设置为：
 
 ```text
 http://<server-ip>:8096
 ```
 
-Users can be created from the admin dashboard or by API:
+可以在管理后台创建用户，也可以通过 API 创建：
 
 ```bash
 curl -X POST "http://localhost:8096/Users/New?api_key=change-me-please" \
@@ -198,24 +187,22 @@ curl -X POST "http://localhost:8096/Users/New?api_key=change-me-please" \
   -d '{"Name":"alice","Password":"alice123"}'
 ```
 
-Then assign library access through the user policy API or admin UI.
+之后可以通过用户策略 API 或管理后台分配媒体库访问权限。
 
-## Third-Party Tool Compatibility
+## 第三方工具兼容
 
-Emotion accepts Emby-compatible API tokens in:
+Emotion 支持以下 Emby 兼容鉴权方式：
 
-- `api_key` query parameter
+- `api_key` 查询参数
 - `X-Emby-Token`
 - `X-MediaBrowser-Token`
-- `X-Emby-Authorization` with `Token="..."`
+- 带有 `Token="..."` 的 `X-Emby-Authorization`
 
-Routes are available both with and without the `/emby` prefix, matching common
-Emby tooling behavior.
+接口同时支持带 `/emby` 前缀和不带前缀的路径，以适配常见 Emby 工具的行为。
 
 ### MoviePilot
 
-Emotion includes common library management APIs used by MoviePilot-style Emby
-integrations:
+Emotion 提供 MoviePilot 风格 Emby 集成常用的媒体库管理接口：
 
 ```text
 GET  /Library/SelectableMediaFolders
@@ -224,24 +211,21 @@ POST /Library/Media/Updated
 POST /Items/{itemId}/Refresh
 ```
 
-Mount the same media root into MoviePilot and Emotion if MoviePilot needs to
-write or organize files. Emotion can then scan the same container-visible path.
+如果 MoviePilot 需要写入或整理文件，请将同一个媒体根目录同时挂载到 MoviePilot 和 Emotion。Emotion 可以扫描相同的容器可见路径。
 
 ### MediaVault
 
-MediaVault can be configured to use Emotion as its Emby server for media library
-management features.
+MediaVault 可以将 Emotion 配置为 Emby 服务器，用于媒体库管理功能。
 
-Recommended MediaVault Emby settings:
+推荐的 MediaVault Emby 配置：
 
 ```text
 Emby server: http://<emotion-host>:8096
-API key:     your Emotion API_KEY or generated admin API key
-UserId:      an Emotion user id, for example 1
+API key:     Emotion 的 API_KEY 或生成的管理 API Key
+UserId:      Emotion 用户 ID，例如 1
 ```
 
-Emotion now supports the common APIs MediaVault checks for library and item
-management:
+Emotion 已支持 MediaVault 常用于检查媒体库和媒体项目管理能力的接口：
 
 ```text
 GET /System/Info
@@ -257,76 +241,69 @@ POST /Library/Refresh
 POST /Items/{itemId}/Refresh
 ```
 
-MediaVault's 115/302 proxy features are separate from Emotion and are not
-required for basic media library management. Advanced MediaVault features that
-depend on ScripterX, webhook events, or Emby plugin-specific reporting may
-require additional compatibility work.
+MediaVault 的 115/302 代理功能独立于 Emotion，基础媒体库管理不依赖这些功能。依赖 ScripterX、Webhook 事件或 Emby 插件专属上报的高级能力，可能还需要额外兼容工作。
 
-## Common API Examples
+## 常用 API 示例
 
-Server info:
+获取服务器信息：
 
 ```bash
 curl "http://localhost:8096/System/Info?api_key=change-me-please"
 ```
 
-List users:
+列出用户：
 
 ```bash
 curl "http://localhost:8096/Users?api_key=change-me-please"
 ```
 
-List user libraries:
+列出用户媒体库：
 
 ```bash
 curl "http://localhost:8096/Users/1/Views?api_key=change-me-please"
 ```
 
-List items:
+列出媒体项目：
 
 ```bash
 curl "http://localhost:8096/Users/1/Items?api_key=change-me-please&Recursive=true&Limit=50"
 ```
 
-Refresh library:
+刷新媒体库：
 
 ```bash
 curl -X POST "http://localhost:8096/Library/Refresh?api_key=change-me-please"
 ```
 
-Refresh one item:
+刷新单个媒体：
 
 ```bash
 curl -X POST "http://localhost:8096/Items/vl-1/Refresh?api_key=change-me-please"
 ```
 
-## Development
+## 开发
 
-Run tests:
+运行测试：
 
 ```bash
 go test ./...
 ```
 
-Build Docker image:
+构建 Docker 镜像：
 
 ```bash
 docker compose build emotion
 ```
 
-Run locally with an existing PostgreSQL database:
+使用已有 PostgreSQL 数据库在本地运行：
 
 ```bash
 cp .env.example .env
 go run ./cmd/emotion
 ```
 
-## Notes
+## 注意事项
 
-- The library root path is used as the default scan path and for third-party
-  refresh requests. If you never use automatic refresh or path-based scanning,
-  it can be left empty and scan paths can be provided manually.
-- Scanning speed depends mostly on disk performance, number of files, database
-  latency, and whether metadata probing is required.
-- TMDB scraping speed is rate-limited and parallelized to avoid overloading TMDB
-  while still processing batches quickly.
+- 媒体库根路径会作为默认扫描路径，也会用于第三方工具触发的刷新请求。如果不使用自动刷新或基于路径的扫描，可以留空并在扫描时手动传入路径。
+- 扫描速度主要受磁盘性能、文件数量、数据库延迟以及是否需要探测元数据影响。
+- TMDB 刮削会受到 TMDB 速率限制影响，Emotion 会通过并发控制在尽量提高批处理速度的同时避免过度请求。
