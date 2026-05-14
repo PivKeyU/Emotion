@@ -1,10 +1,13 @@
 package importer
 
 import (
+	"bytes"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // STRM represents the parsed content of a .strm file.
@@ -61,6 +64,7 @@ func ParseSTRM(path string) (*STRM, error) {
 
 // ParseSTRMBytes parses already-read bytes.
 func ParseSTRMBytes(data []byte) *STRM {
+	data = normalizeSTRMBytes(data)
 	data = stripBOM(data)
 	s := &STRM{}
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -78,6 +82,36 @@ func ParseSTRMBytes(data []byte) *STRM {
 		s.IsURL = looksLikeURL(s.Primary)
 	}
 	return s
+}
+
+func normalizeSTRMBytes(data []byte) []byte {
+	switch {
+	case len(data) >= 2 && data[0] == 0xff && data[1] == 0xfe:
+		return decodeUTF16(data[2:], true)
+	case len(data) >= 2 && data[0] == 0xfe && data[1] == 0xff:
+		return decodeUTF16(data[2:], false)
+	case utf8.Valid(data):
+		return data
+	case bytes.IndexByte(data, 0) >= 0:
+		return decodeUTF16(data, true)
+	default:
+		return data
+	}
+}
+
+func decodeUTF16(data []byte, littleEndian bool) []byte {
+	if len(data)%2 == 1 {
+		data = data[:len(data)-1]
+	}
+	u16 := make([]uint16, 0, len(data)/2)
+	for i := 0; i+1 < len(data); i += 2 {
+		if littleEndian {
+			u16 = append(u16, uint16(data[i])|uint16(data[i+1])<<8)
+		} else {
+			u16 = append(u16, uint16(data[i])<<8|uint16(data[i+1]))
+		}
+	}
+	return []byte(string(utf16.Decode(u16)))
 }
 
 // looksLikeURL is true if the value parses to a URL with a scheme we recognize.

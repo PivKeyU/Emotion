@@ -301,6 +301,51 @@
     color: #ffb0b0;
   }
   .scan-summary .errors ul { margin: 6px 0 0; padding-left: 18px; }
+  .scan-progress {
+    display: grid;
+    gap: 12px;
+  }
+  .scan-progress .bar {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .scan-progress .bar > div {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+  .file-browser {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .file-browser .path {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .file-browser .list {
+    max-height: 280px;
+    overflow: auto;
+  }
+  .file-browser .entry {
+    display: grid;
+    grid-template-columns: 72px 1fr auto;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    cursor: pointer;
+  }
+  .file-browser .entry:hover { background: var(--panel-2); }
+  .file-browser .entry.file { cursor: default; color: var(--muted); }
 
   /* ---------- toast ---------- */
   #toast-box {
@@ -491,12 +536,29 @@
           <input type="checkbox" id="scan-dry"/><label for="scan-dry">演练（不写库）</label>
         </div>
         <button class="btn" id="btn-scan-run">开始扫描</button>
+        <button class="btn secondary" id="btn-watch-start">监控并增量同步</button>
+      </div>
+      <div class="file-browser" id="file-browser">
+        <div class="path">
+          <span class="mono" id="file-path">/data</span>
+          <span class="grow"></span>
+          <button class="btn sm secondary" id="btn-file-use">使用当前目录</button>
+          <button class="btn sm secondary" id="btn-file-refresh">刷新</button>
+        </div>
+        <div class="list" id="file-list">
+          <div class="muted" style="padding:10px">连接后可浏览容器目录。</div>
+        </div>
       </div>
     </div>
 
     <div class="card">
       <h3>扫描结果</h3>
       <div class="output empty" id="scan-output">暂无输出</div>
+    </div>
+
+    <div class="card">
+      <h3>目录监控</h3>
+      <div class="output empty" id="watch-output">暂无监控任务</div>
     </div>
   </section>
 
@@ -689,6 +751,9 @@ const state = {
   mediaOffset: 0,
   mediaLimit: 48,
   mediaChildren: {},
+  activeScanTimer: null,
+  watchTimer: null,
+  browsePath: "/data",
   users: [],     // [{id, name, is_admin, is_disabled, is_can_download}]
   counts: null,
   sessions: [],
@@ -738,6 +803,12 @@ function toast(msg, kind = "info", ms = 3000) {
 function baseURL() {
   // Empty = use same origin as dashboard.
   return (state.url || "").replace(/\/$/, "");
+}
+function assetURL(path) {
+  if (!path) return "";
+  if (/^https?:\/\//i.test(path)) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return baseURL() + path + sep + "api_key=" + encodeURIComponent(state.key);
 }
 function withKey(path) {
   const sep = path.includes("?") ? "&" : "?";
@@ -962,7 +1033,7 @@ function mediaCardHTML(item) {
   const isSeries = item.type === "tv";
   const kind = isSeries ? "剧集" : "电影";
   const poster = item.poster_url
-    ? `<img src="${escHTML(item.poster_url)}" alt="${escHTML(item.title)}" loading="lazy" onerror="this.remove()" />`
+    ? `<img src="${escHTML(assetURL(item.poster_url))}" alt="${escHTML(item.title)}" loading="lazy" onerror="this.remove()" />`
     : `<div class="fallback">${escHTML(item.title)}</div>`;
   const counts = isSeries
     ? `${item.season_count || 0} 季 · ${item.episode_count || 0} 集`
@@ -1049,14 +1120,13 @@ async function runScan() {
   out.classList.remove("empty");
   out.textContent = "发起扫描…";
   try {
-    const res = await api("POST", "/admin/library/scan", {
+    const job = await api("POST", "/admin/library/scan/start", {
       library_id: libID, root,
       default_type: dType || undefined,
       scrape: scrape || undefined,
       follow_symlinks: follow, dry_run: dry,
     });
-    renderScanResult(res);
-    toast("扫描完成", "ok");
+    await pollScanJob(job.id);
     await loadCounts();
     await loadMedia(true);
   } catch (e) {
@@ -1067,8 +1137,58 @@ async function runScan() {
   }
 }
 
+async function pollScanJob(id) {
+  if (state.activeScanTimer) {
+    clearTimeout(state.activeScanTimer);
+    state.activeScanTimer = null;
+  }
+  while (true) {
+    const job = await api("GET", "/admin/library/scan/" + encodeURIComponent(id));
+    renderScanProgress(job);
+    if (job.status === "done") {
+      renderScanResult(job.result);
+      toast("扫描完成", "ok");
+      return job;
+    }
+    if (job.status === "failed") {
+      throw new Error(job.error || "扫描失败");
+    }
+    await new Promise(resolve => { state.activeScanTimer = setTimeout(resolve, 1000); });
+  }
+}
+
 function scanReport(res) {
   return res && res.import ? res.import : res;
+}
+
+function renderScanProgress(job) {
+  const p = job.progress || {};
+  const rep = p.report || {};
+  const total = Number(p.total || 0);
+  const processed = Number(p.processed_dirs || 0);
+  const walked = Number(p.walked_dirs || 0);
+  const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(processed * 100 / total))) : 0;
+  const stageLabel = p.stage === "walking" ? "正在遍历目录" :
+    p.stage === "importing" ? "正在导入媒体" :
+    p.stage === "done" ? "扫描完成" :
+    p.stage === "failed" ? "扫描失败" : "排队中";
+  const out = $("#scan-output");
+  out.innerHTML = `
+    <div class="scan-progress">
+      <div class="headline">
+        <span class="tag">${escHTML(stageLabel)}</span>
+        <span>${total > 0 ? `${processed}/${total} 个目录` : `已遍历 ${walked} 个目录`}</span>
+      </div>
+      <div class="bar"><div style="width:${pct}%"></div></div>
+      <div class="mono muted">${escHTML(p.current || "")}</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="k">电影</div><div class="v">${Number(rep.movies_imported || 0)}</div></div>
+        <div class="stat"><div class="k">剧集</div><div class="v">${Number(rep.series_imported || 0)}</div></div>
+        <div class="stat"><div class="k">集数</div><div class="v">${Number(rep.episodes_imported || 0)}</div></div>
+        <div class="stat"><div class="k">媒体源</div><div class="v">${Number(rep.media_rows_imported || 0)}</div></div>
+      </div>
+    </div>
+  `;
 }
 
 function renderScanResult(res) {
@@ -1110,6 +1230,98 @@ function renderScanResult(res) {
       ` : ""}
     </div>
   `;
+}
+
+async function startWatch() {
+  const libID  = parseInt($("#scan-library").value, 10);
+  const root   = $("#scan-root").value.trim();
+  const dType  = $("#scan-default-type").value;
+  const scrape = $("#scan-scrape").value;
+  const follow = $("#scan-follow").checked;
+  const dry    = $("#scan-dry").checked;
+  if (!libID) { toast("请选择媒体库", "err"); return; }
+  if (!root)  { toast("请填写扫描路径", "err"); return; }
+  const btn = $("#btn-watch-start");
+  btn.disabled = true;
+  try {
+    await api("POST", "/admin/library/watch/start", {
+      library_id: libID, root,
+      default_type: dType || undefined,
+      scrape: scrape || undefined,
+      follow_symlinks: follow,
+      dry_run: dry,
+      interval_seconds: 30,
+    });
+    toast("已启动目录监控", "ok");
+    await loadWatchers();
+    startWatchPolling();
+  } catch (e) {
+    toast(e.message, "err", 6000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function startWatchPolling() {
+  if (state.watchTimer) clearInterval(state.watchTimer);
+  state.watchTimer = setInterval(loadWatchers, 5000);
+}
+
+async function loadWatchers() {
+  const out = $("#watch-output");
+  out.classList.remove("empty");
+  try {
+    const jobs = await api("GET", "/admin/library/watch");
+    if (!Array.isArray(jobs) || !jobs.length) {
+      out.classList.add("empty");
+      out.textContent = "暂无监控任务";
+      return;
+    }
+    out.innerHTML = jobs.map(j => `
+      <div>
+        <span class="tag ${j.status === "running" ? "ok" : ""}">${escHTML(j.status)}</span>
+        <span class="mono">${escHTML(j.root)}</span>
+        <div class="muted">每 ${Number(j.interval_seconds || 0)} 秒检查一次，变更 ${Number(j.change_count || 0)} 次，最近扫描 ${escHTML(j.last_scan_id || "-")}</div>
+        ${j.error ? `<div class="errors">${escHTML(j.error)}</div>` : ""}
+      </div>
+    `).join("<hr style='border-color:var(--border);border-style:solid;border-width:1px 0 0;margin:10px 0'>");
+  } catch (e) {
+    out.textContent = "加载监控失败: " + e.message;
+  }
+}
+
+async function loadFiles(path = state.browsePath || "/data") {
+  state.browsePath = path;
+  $("#file-path").textContent = path;
+  const list = $("#file-list");
+  list.innerHTML = `<div class="muted" style="padding:10px">正在加载…</div>`;
+  try {
+    const res = await api("GET", "/admin/files?path=" + encodeURIComponent(path));
+    state.browsePath = res.path || path;
+    $("#file-path").textContent = state.browsePath;
+    const entries = Array.isArray(res.entries) ? res.entries : [];
+    if (!entries.length) {
+      list.innerHTML = `<div class="muted" style="padding:10px">目录为空</div>`;
+      return;
+    }
+    list.innerHTML = entries.map(e => `
+      <div class="entry ${e.type === "dir" ? "dir" : "file"}" data-type="${escHTML(e.type)}" data-path="${escHTML(e.path)}">
+        <span class="tag">${e.type === "dir" ? "目录" : (e.media ? "媒体" : "文件")}</span>
+        <span>${escHTML(e.name)}</span>
+        <span class="muted">${e.size ? formatBytes(e.size) : ""}</span>
+      </div>
+    `).join("");
+  } catch (e) {
+    list.innerHTML = `<div class="muted" style="padding:10px">加载失败: ${escHTML(e.message)}</div>`;
+  }
+}
+
+function formatBytes(n) {
+  n = Number(n || 0);
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+  return (n / 1024 / 1024 / 1024).toFixed(1) + " GB";
 }
 
 // ------------------ tmdb ------------------
@@ -1344,6 +1556,7 @@ function bindUI() {
         if (n.dataset.view === "users")    loadUsers();
         if (n.dataset.view === "libraries") loadLibraries();
         if (n.dataset.view === "libraries") loadMedia(false);
+        if (n.dataset.view === "scanner")  loadFiles(state.browsePath || "/data");
       }
     };
   });
@@ -1379,6 +1592,17 @@ function bindUI() {
 
   // scanner
   $("#btn-scan-run").onclick = runScan;
+  $("#btn-watch-start").onclick = startWatch;
+  $("#btn-file-use").onclick = () => {
+    $("#scan-root").value = state.browsePath || "/data";
+    toast("已选择扫描路径", "ok");
+  };
+  $("#btn-file-refresh").onclick = () => loadFiles(state.browsePath || "/data");
+  $("#file-list").addEventListener("click", e => {
+    const row = e.target.closest(".entry[data-type='dir']");
+    if (!row) return;
+    loadFiles(row.dataset.path);
+  });
 
   // tmdb
   $("#btn-tmdb-one").onclick = tmdbRefreshOne;

@@ -34,6 +34,8 @@ type Options struct {
 	DryRun bool
 	// Logger receives progress messages.
 	Logger *slog.Logger
+	// Progress receives coarse scanner/importer progress updates.
+	Progress func(Progress)
 }
 
 // Report captures outcomes for a user-visible summary.
@@ -54,6 +56,16 @@ type Report struct {
 	// updated during this run. Callers (typically the admin handler) can
 	// forward these to a TMDB scraper for post-import metadata backfill.
 	TouchedVideoListIDs []int64 `json:"touched_video_list_ids,omitempty"`
+}
+
+// Progress is a snapshot of the current import run.
+type Progress struct {
+	Stage      string `json:"stage"`
+	Current    string `json:"current,omitempty"`
+	WalkedDirs int    `json:"walked_dirs,omitempty"`
+	Processed  int    `json:"processed_dirs,omitempty"`
+	Total      int    `json:"total_dirs,omitempty"`
+	Report     Report `json:"report"`
 }
 
 // Importer coordinates scanning and DB upserts.
@@ -89,12 +101,38 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 
 	rep := &Report{StartedAt: time.Now()}
+	emitProgress := func(stage, current string, walked, processed, total int) {
+		if opts.Progress == nil {
+			return
+		}
+		snap := *rep
+		snap.Errors = append([]string(nil), rep.Errors...)
+		snap.TouchedVideoListIDs = append([]int64(nil), rep.TouchedVideoListIDs...)
+		opts.Progress(Progress{
+			Stage:      stage,
+			Current:    current,
+			WalkedDirs: walked,
+			Processed:  processed,
+			Total:      total,
+			Report:     snap,
+		})
+	}
+	emitProgress("walking", opts.Root, 0, 0, 0)
 
-	dirs, err := Scan(ScanOptions{Root: opts.Root, FollowSymlinks: opts.FollowSymlinks})
+	dirs, err := Scan(ScanOptions{
+		Root:           opts.Root,
+		FollowSymlinks: opts.FollowSymlinks,
+		OnDir: func(path string, seen int) {
+			if seen == 1 || seen%25 == 0 {
+				emitProgress("walking", path, seen, 0, 0)
+			}
+		},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
 	rep.Scanned = len(dirs)
+	emitProgress("importing", "", 0, 0, len(dirs))
 	log.Info("scan complete", "dirs", len(dirs))
 
 	// Ordered processing so parent-dir NFOs are visited before child directories.
@@ -113,11 +151,13 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 	var activeSeries *seriesCtx
 
-	for _, dirPath := range keys {
+	for idx, dirPath := range keys {
 		bucket := dirs[dirPath]
+		emitProgress("importing", dirPath, 0, idx+1, len(keys))
 		if err := ctx.Err(); err != nil {
 			rep.FinishedAt = time.Now()
 			rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
+			emitProgress("canceled", dirPath, 0, idx+1, len(keys))
 			return rep, err
 		}
 
@@ -205,6 +245,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 
 	rep.FinishedAt = time.Now()
 	rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
+	emitProgress("done", "", 0, len(keys), len(keys))
 	log.Info("import finished",
 		"dirs", rep.Scanned, "movies", rep.Movies,
 		"series", rep.Series, "seasons", rep.Seasons, "episodes", rep.Episodes,
@@ -238,24 +279,24 @@ func (i *Importer) classifyMedia(mediaPath string, bucket *DirFiles, defaultType
 	// Also look at the parent folder name for provider tags / year. When the
 	// filename itself has no hint, inherit whatever the parent dir declares
 	// (e.g. "A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]/foo.mp4").
-	if parentHint := ParseFilename(filepath.Base(filepath.Dir(mediaPath))); true {
-		if c.parsed.TMDBID == "" && parentHint.TMDBID != "" {
-			c.parsed.TMDBID = parentHint.TMDBID
+	parentHint := ParseFilename(filepath.Base(filepath.Dir(mediaPath)))
+	seriesHint := seriesHintForMedia(mediaPath)
+	inheritProviderHints(&c.parsed, parentHint)
+	inheritProviderHints(&c.parsed, seriesHint)
+	if c.parsed.Year == 0 && parentHint.Year > 0 {
+		c.parsed.Year = parentHint.Year
+	}
+	if c.parsed.Year == 0 && seriesHint.Year > 0 {
+		c.parsed.Year = seriesHint.Year
+	}
+	// Title: prefer the series folder for episodes, otherwise parent folder for
+	// placeholder media names like "01.strm".
+	if c.parsed.IsEpisode() || c.parsed.Season > 0 || ParseSeasonFolder(filepath.Base(filepath.Dir(mediaPath))) >= 0 {
+		if seriesHint.Title != "" {
+			c.parsed.Title = seriesHint.Title
 		}
-		if c.parsed.IMDBID == "" && parentHint.IMDBID != "" {
-			c.parsed.IMDBID = parentHint.IMDBID
-		}
-		if c.parsed.TVDBID == "" && parentHint.TVDBID != "" {
-			c.parsed.TVDBID = parentHint.TVDBID
-		}
-		if c.parsed.Year == 0 && parentHint.Year > 0 {
-			c.parsed.Year = parentHint.Year
-		}
-		// Title: prefer the (usually richer) parent dir name when the file
-		// itself produced a placeholder-looking title.
-		if parentHint.Title != "" && looksLikePlaceholder(c.parsed.Title) {
-			c.parsed.Title = parentHint.Title
-		}
+	} else if parentHint.Title != "" && looksLikePlaceholder(c.parsed.Title) {
+		c.parsed.Title = parentHint.Title
 	}
 
 	// Per-file NFO (e.g. foo.mkv.nfo or foo.nfo next to foo.mkv).
@@ -264,8 +305,12 @@ func (i *Importer) classifyMedia(mediaPath string, bucket *DirFiles, defaultType
 	// Season folder detection: walk up one level.
 	seasonFromFolder := ParseSeasonFolder(filepath.Base(filepath.Dir(mediaPath)))
 
-	// Episode signals: SxxExx in filename, explicit E01, or season folder + numeric ep.
-	if c.parsed.IsEpisode() || c.parsed.Season > 0 || seasonFromFolder >= 0 {
+	strongEpisode := c.parsed.IsEpisode() && !c.parsed.WeakEpisode
+	hasTVContext := strongEpisode || c.parsed.Season > 0 || seasonFromFolder >= 0 || strings.EqualFold(defaultType, "tv")
+
+	// Episode signals: SxxExx in filename, explicit E01/第01集, season folder, or
+	// weak numeric names only when an explicit TV context exists.
+	if hasTVContext {
 		c.kind = itemKindEpisode
 		if c.parsed.Season == 0 && seasonFromFolder >= 0 {
 			c.parsed.Season = seasonFromFolder
@@ -305,6 +350,26 @@ func (i *Importer) classifyMedia(mediaPath string, bucket *DirFiles, defaultType
 		c.kind = itemKindMovie
 	}
 	return c, nil
+}
+
+func inheritProviderHints(dst *ParsedName, src ParsedName) {
+	if dst.TMDBID == "" && src.TMDBID != "" {
+		dst.TMDBID = src.TMDBID
+	}
+	if dst.IMDBID == "" && src.IMDBID != "" {
+		dst.IMDBID = src.IMDBID
+	}
+	if dst.TVDBID == "" && src.TVDBID != "" {
+		dst.TVDBID = src.TVDBID
+	}
+}
+
+func seriesHintForMedia(mediaPath string) ParsedName {
+	dir := filepath.Dir(mediaPath)
+	if ParseSeasonFolder(filepath.Base(dir)) >= 0 {
+		return ParseFilename(filepath.Base(filepath.Dir(dir)))
+	}
+	return ParseFilename(filepath.Base(dir))
 }
 
 // seriesRootFor yields the "root of this series" for tracking purposes.
@@ -452,6 +517,9 @@ func (i *Importer) upsertEpisode(ctx context.Context, opts Options, bucket *DirF
 
 	// Episode upsert.
 	epTitle := c.parsed.Title
+	if epTitle == seriesTitle || looksLikePlaceholder(epTitle) {
+		epTitle = fmt.Sprintf("%s E%02d", seriesTitle, c.parsed.Episode)
+	}
 	var desc sql.NullString
 	air := sql.NullTime{}
 	runtime := 0
@@ -594,9 +662,9 @@ func (i *Importer) upsertMedia(
 		SELECT id, uuid FROM video_media
 		WHERE video_list_id = ?
 		  AND video_episode_id IS NOT DISTINCT FROM ?
-		  AND path_url = ?
+		  AND (path_url = ? OR name = ?)
 		LIMIT 1
-	`, videoListID, nullableInt64(videoEpisodeID), pathURL).Scan(&existingID, &existingUUID)
+	`, videoListID, nullableInt64(videoEpisodeID), pathURL, name).Scan(&existingID, &existingUUID)
 
 	nullSeason := nullableInt64(videoSeasonID)
 	nullEp := nullableInt64(videoEpisodeID)

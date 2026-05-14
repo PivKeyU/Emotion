@@ -1,14 +1,23 @@
 package handlers
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -29,6 +38,12 @@ type Admin struct {
 	importer *importer.Importer
 	tmdb     *tmdb.Client // may be nil
 	scraper  *tmdb.Scraper
+
+	scanMu   sync.Mutex
+	scanJobs map[string]*scanJob
+
+	watchMu   sync.Mutex
+	watchJobs map[string]*watchJob
 }
 
 // NewAdmin constructs the handler.
@@ -42,12 +57,14 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		scraper = tmdb.NewScraper(client, database, log)
 	}
 	return &Admin{
-		db:       database,
-		cfg:      cfg,
-		log:      log,
-		importer: importer.New(database, log),
-		tmdb:     client,
-		scraper:  scraper,
+		db:        database,
+		cfg:       cfg,
+		log:       log,
+		importer:  importer.New(database, log),
+		tmdb:      client,
+		scraper:   scraper,
+		scanJobs:  map[string]*scanJob{},
+		watchJobs: map[string]*watchJob{},
 	}
 }
 
@@ -174,6 +191,77 @@ type AdminMediaItem struct {
 type AdminMediaListResponse struct {
 	Items []AdminMediaItem `json:"items"`
 	Total int64            `json:"total"`
+}
+
+type adminFileEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Type  string `json:"type"`
+	Size  int64  `json:"size,omitempty"`
+	Media bool   `json:"media,omitempty"`
+}
+
+// FilesBrowse lists container/server directories for the admin dashboard.
+// GET /admin/files?path=/data
+func (a *Admin) FilesBrowse(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		path = "/data"
+	}
+	clean := filepath.Clean(path)
+	info, err := os.Stat(clean)
+	if err != nil || !info.IsDir() {
+		WriteText(w, http.StatusBadRequest, "directory not found: "+clean)
+		return
+	}
+	entries, err := os.ReadDir(clean)
+	if err != nil {
+		WriteText(w, http.StatusForbidden, err.Error())
+		return
+	}
+	out := []adminFileEntry{}
+	if parent := filepath.Dir(clean); parent != clean {
+		out = append(out, adminFileEntry{Name: "..", Path: parent, Type: "dir"})
+	}
+	for _, ent := range entries {
+		if strings.HasPrefix(ent.Name(), ".") {
+			continue
+		}
+		full := filepath.Join(clean, ent.Name())
+		item := adminFileEntry{Name: ent.Name(), Path: full}
+		if ent.IsDir() {
+			item.Type = "dir"
+		} else {
+			item.Type = "file"
+			item.Media = adminLooksMedia(ent.Name())
+			if info, err := ent.Info(); err == nil {
+				item.Size = info.Size()
+			}
+		}
+		out = append(out, item)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type == "dir"
+		}
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"path":    clean,
+		"entries": out,
+	})
+}
+
+func adminLooksMedia(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".mkv", ".mp4", ".m4v", ".ts", ".avi", ".mov", ".wmv", ".flv", ".webm", ".iso", ".rmvb",
+		".strm", ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".srt", ".ass", ".vtt", ".ssa", ".sub":
+		return true
+	}
+	return false
 }
 
 // AdminMediaList returns poster-ready media rows for the visual admin dashboard.
@@ -513,6 +601,16 @@ type scanRequest struct {
 	Scrape string `json:"scrape"`
 }
 
+type scanJob struct {
+	ID         string            `json:"id"`
+	Status     string            `json:"status"`
+	StartedAt  time.Time         `json:"started_at"`
+	FinishedAt time.Time         `json:"finished_at,omitempty"`
+	Progress   importer.Progress `json:"progress"`
+	Result     any               `json:"result,omitempty"`
+	Error      string            `json:"error,omitempty"`
+}
+
 // LibraryScan runs a synchronous import from a local directory.
 //
 // POST /admin/library/scan
@@ -549,14 +647,7 @@ func (a *Admin) LibraryScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, err := a.importer.Run(r.Context(), importer.Options{
-		LibraryID:      body.LibraryID,
-		Root:           body.Root,
-		DefaultType:    body.DefaultType,
-		FollowSymlinks: body.FollowSymlinks,
-		DryRun:         body.DryRun,
-		Logger:         a.log,
-	})
+	result, err := a.runScanJob(r.Context(), body, nil)
 	if err != nil {
 		a.log.Error("scan failed", "err", err)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -567,7 +658,104 @@ func (a *Admin) LibraryScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional TMDB backfill for items touched by this import.
+	WriteJSON(w, http.StatusOK, result)
+}
+
+// LibraryScanStart starts an asynchronous scan job.
+// POST /admin/library/scan/start
+func (a *Admin) LibraryScanStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body scanRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	if body.Root == "" {
+		WriteText(w, http.StatusBadRequest, "root is required")
+		return
+	}
+	if _, err := os.Stat(body.Root); err != nil {
+		WriteText(w, http.StatusBadRequest, "root does not exist: "+body.Root)
+		return
+	}
+	if body.LibraryID <= 0 {
+		WriteText(w, http.StatusBadRequest, "library_id is required")
+		return
+	}
+
+	id := randomScanID()
+	job := &scanJob{
+		ID:        id,
+		Status:    "running",
+		StartedAt: time.Now(),
+		Progress: importer.Progress{
+			Stage:   "queued",
+			Current: body.Root,
+			Report:  importer.Report{StartedAt: time.Now()},
+		},
+	}
+	a.scanMu.Lock()
+	a.scanJobs[id] = job
+	a.scanMu.Unlock()
+
+	go func() {
+		result, err := a.runScanJob(context.Background(), body, func(p importer.Progress) {
+			a.updateScanJob(id, func(j *scanJob) {
+				j.Progress = p
+			})
+		})
+		a.updateScanJob(id, func(j *scanJob) {
+			j.FinishedAt = time.Now()
+			if err != nil {
+				j.Status = "failed"
+				j.Error = err.Error()
+				j.Progress.Stage = "failed"
+				return
+			}
+			j.Status = "done"
+			j.Result = result
+			j.Progress.Stage = "done"
+		})
+	}()
+
+	WriteJSON(w, http.StatusAccepted, job)
+}
+
+// LibraryScanStatus returns the latest status for an async scan job.
+// GET /admin/library/scan/{id}
+func (a *Admin) LibraryScanStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	a.scanMu.Lock()
+	job := a.cloneScanJob(a.scanJobs[id])
+	a.scanMu.Unlock()
+	if job == nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	WriteJSON(w, http.StatusOK, job)
+}
+
+func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(importer.Progress)) (any, error) {
+	report, err := a.importer.Run(ctx, importer.Options{
+		LibraryID:      body.LibraryID,
+		Root:           body.Root,
+		DefaultType:    body.DefaultType,
+		FollowSymlinks: body.FollowSymlinks,
+		DryRun:         body.DryRun,
+		Logger:         a.log,
+		Progress:       progress,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	if !body.DryRun {
 		mode := strings.ToLower(strings.TrimSpace(body.Scrape))
 		wantScrape := mode == "on" || mode == "force" ||
@@ -575,22 +763,308 @@ func (a *Admin) LibraryScan(w http.ResponseWriter, r *http.Request) {
 		if wantScrape && a.scraper != nil && a.scraper.Enabled() {
 			scrapeResults := make([]*tmdb.ScrapeResult, 0, len(report.TouchedVideoListIDs))
 			for _, id := range report.TouchedVideoListIDs {
-				res, err := a.scraper.ScrapeVideoList(r.Context(), id, mode == "force")
+				res, err := a.scraper.ScrapeVideoList(ctx, id, mode == "force")
 				if err != nil {
 					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
 					continue
 				}
 				scrapeResults = append(scrapeResults, res)
 			}
-			WriteJSON(w, http.StatusOK, map[string]any{
+			return map[string]any{
 				"import": report,
 				"tmdb":   scrapeResults,
-			})
-			return
+			}, nil
 		}
 	}
 
-	WriteJSON(w, http.StatusOK, report)
+	return report, nil
+}
+
+func (a *Admin) updateScanJob(id string, fn func(*scanJob)) {
+	a.scanMu.Lock()
+	defer a.scanMu.Unlock()
+	if job := a.scanJobs[id]; job != nil {
+		fn(job)
+	}
+}
+
+func (a *Admin) cloneScanJob(job *scanJob) *scanJob {
+	if job == nil {
+		return nil
+	}
+	out := *job
+	return &out
+}
+
+func randomScanID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b[:])
+}
+
+type watchRequest struct {
+	scanRequest
+	IntervalSeconds int `json:"interval_seconds"`
+}
+
+type watchJob struct {
+	ID              string    `json:"id"`
+	Status          string    `json:"status"`
+	StartedAt       time.Time `json:"started_at"`
+	LastCheckedAt   time.Time `json:"last_checked_at,omitempty"`
+	LastChangedAt   time.Time `json:"last_changed_at,omitempty"`
+	LastScanID      string    `json:"last_scan_id,omitempty"`
+	ChangeCount     int       `json:"change_count"`
+	IntervalSeconds int       `json:"interval_seconds"`
+	Root            string    `json:"root"`
+	Error           string    `json:"error,omitempty"`
+	cancel          context.CancelFunc
+	snapshot        string
+}
+
+// LibraryWatchStart starts a polling directory watcher. It performs one full
+// scan immediately, then triggers an incremental idempotent scan whenever file
+// names, sizes, or mtimes under the root change.
+// POST /admin/library/watch/start
+func (a *Admin) LibraryWatchStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body watchRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+	if body.Root == "" {
+		WriteText(w, http.StatusBadRequest, "root is required")
+		return
+	}
+	if _, err := os.Stat(body.Root); err != nil {
+		WriteText(w, http.StatusBadRequest, "root does not exist: "+body.Root)
+		return
+	}
+	if body.LibraryID <= 0 {
+		WriteText(w, http.StatusBadRequest, "library_id is required")
+		return
+	}
+	interval := body.IntervalSeconds
+	if interval <= 0 {
+		interval = 30
+	}
+	if interval < 5 {
+		interval = 5
+	}
+
+	id := randomScanID()
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &watchJob{
+		ID:              id,
+		Status:          "running",
+		StartedAt:       time.Now(),
+		IntervalSeconds: interval,
+		Root:            body.Root,
+		cancel:          cancel,
+	}
+	a.watchMu.Lock()
+	a.watchJobs[id] = job
+	a.watchMu.Unlock()
+
+	go a.runWatchJob(ctx, id, scanRequest{
+		LibraryID:      body.LibraryID,
+		Root:           body.Root,
+		DefaultType:    body.DefaultType,
+		FollowSymlinks: body.FollowSymlinks,
+		DryRun:         body.DryRun,
+		Scrape:         body.Scrape,
+	}, time.Duration(interval)*time.Second)
+	WriteJSON(w, http.StatusAccepted, a.publicWatchJob(job))
+}
+
+// LibraryWatchStatus returns all watcher jobs or one watcher by id.
+// GET /admin/library/watch or /admin/library/watch/{id}
+func (a *Admin) LibraryWatchStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	if id != "" {
+		job := a.publicWatchJob(a.watchJobs[id])
+		if job == nil {
+			WriteStatus(w, http.StatusNotFound)
+			return
+		}
+		WriteJSON(w, http.StatusOK, job)
+		return
+	}
+	out := []any{}
+	for _, job := range a.watchJobs {
+		out = append(out, a.publicWatchJob(job))
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// LibraryWatchStop stops a watcher.
+// DELETE /admin/library/watch/{id}
+func (a *Admin) LibraryWatchStop(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	a.watchMu.Lock()
+	job := a.watchJobs[id]
+	if job != nil {
+		job.Status = "stopped"
+		if job.cancel != nil {
+			job.cancel()
+		}
+	}
+	a.watchMu.Unlock()
+	if job == nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	WriteStatus(w, http.StatusNoContent)
+}
+
+func (a *Admin) runWatchJob(ctx context.Context, id string, req scanRequest, interval time.Duration) {
+	trigger := func() {
+		scanID := randomScanID()
+		a.updateWatchJob(id, func(j *watchJob) {
+			j.LastScanID = scanID
+		})
+		job := &scanJob{
+			ID:        scanID,
+			Status:    "running",
+			StartedAt: time.Now(),
+			Progress:  importer.Progress{Stage: "queued", Current: req.Root, Report: importer.Report{StartedAt: time.Now()}},
+		}
+		a.scanMu.Lock()
+		a.scanJobs[scanID] = job
+		a.scanMu.Unlock()
+		result, err := a.runScanJob(ctx, req, func(p importer.Progress) {
+			a.updateScanJob(scanID, func(j *scanJob) { j.Progress = p })
+		})
+		a.updateScanJob(scanID, func(j *scanJob) {
+			j.FinishedAt = time.Now()
+			if err != nil {
+				j.Status = "failed"
+				j.Error = err.Error()
+				j.Progress.Stage = "failed"
+				return
+			}
+			j.Status = "done"
+			j.Result = result
+			j.Progress.Stage = "done"
+		})
+		if err != nil {
+			a.updateWatchJob(id, func(j *watchJob) { j.Error = err.Error() })
+		}
+	}
+
+	trigger()
+	snap, err := directorySnapshot(req.Root)
+	a.updateWatchJob(id, func(j *watchJob) {
+		j.LastCheckedAt = time.Now()
+		if err != nil {
+			j.Error = err.Error()
+			return
+		}
+		j.snapshot = snap
+	})
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snap, err := directorySnapshot(req.Root)
+			changed := false
+			a.updateWatchJob(id, func(j *watchJob) {
+				j.LastCheckedAt = time.Now()
+				if err != nil {
+					j.Error = err.Error()
+					return
+				}
+				changed = j.snapshot != "" && j.snapshot != snap
+				j.snapshot = snap
+				if changed {
+					j.ChangeCount++
+					j.LastChangedAt = time.Now()
+					j.Error = ""
+				}
+			})
+			if changed {
+				trigger()
+			}
+		}
+	}
+}
+
+func (a *Admin) updateWatchJob(id string, fn func(*watchJob)) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	if job := a.watchJobs[id]; job != nil {
+		fn(job)
+	}
+}
+
+func (a *Admin) publicWatchJob(job *watchJob) map[string]any {
+	if job == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":               job.ID,
+		"status":           job.Status,
+		"started_at":       job.StartedAt,
+		"last_checked_at":  job.LastCheckedAt,
+		"last_changed_at":  job.LastChangedAt,
+		"last_scan_id":     job.LastScanID,
+		"change_count":     job.ChangeCount,
+		"interval_seconds": job.IntervalSeconds,
+		"root":             job.Root,
+		"error":            job.Error,
+	}
+}
+
+func directorySnapshot(root string) (string, error) {
+	var rows []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() || strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
+		kind := importer.FileKindOther
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".mkv", ".mp4", ".m4v", ".ts", ".avi", ".mov", ".wmv", ".flv", ".webm", ".iso", ".rmvb",
+			".strm", ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".srt", ".ass", ".vtt", ".ssa", ".sub":
+			kind = 1
+		}
+		if kind == importer.FileKindOther {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		rows = append(rows, fmt.Sprintf("%s|%d|%d", rel, info.Size(), info.ModTime().UnixNano()))
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(rows)
+	sum := sha256.Sum256([]byte(strings.Join(rows, "\n")))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // TMDBRefreshOneRequest is the POST body for refreshing a single item.

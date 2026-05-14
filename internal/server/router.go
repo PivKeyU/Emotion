@@ -122,6 +122,9 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 	r.Get(prefix+"/Videos/{mediaUUID}/AdditionalParts", items.Similar)
 	r.Get(prefix+"/Videos/{mediaUUID}/Subtitles/{subtitleId}", videos.Subtitle)
 	r.Get(prefix+"/Videos/{mediaUUID}/{mediaName}", videos.Play)
+	r.Get(prefix+"/videos/{mediaUUID}/AdditionalParts", items.Similar)
+	r.Get(prefix+"/videos/{mediaUUID}/subtitles/{subtitleId}", videos.Subtitle)
+	r.Get(prefix+"/videos/{mediaUUID}/{mediaName}", videos.Play)
 
 	// Sessions
 	r.Get(prefix+"/Sessions", sess.List)
@@ -146,9 +149,16 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 		r.Get("/admin/libraries", admin.LibrariesList)
 		r.Post("/admin/libraries", admin.LibraryCreate)
 		r.Delete("/admin/libraries/{id}", admin.LibraryDelete)
+		r.Get("/admin/files", admin.FilesBrowse)
 		r.Get("/admin/media", admin.AdminMediaList)
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Post("/admin/library/scan", admin.LibraryScan)
+		r.Post("/admin/library/scan/start", admin.LibraryScanStart)
+		r.Get("/admin/library/scan/{id}", admin.LibraryScanStatus)
+		r.Post("/admin/library/watch/start", admin.LibraryWatchStart)
+		r.Get("/admin/library/watch", admin.LibraryWatchStatus)
+		r.Get("/admin/library/watch/{id}", admin.LibraryWatchStatus)
+		r.Delete("/admin/library/watch/{id}", admin.LibraryWatchStop)
 		r.Post("/admin/items/{id}/tmdb/refresh", admin.TMDBRefreshOne)
 		r.Post("/admin/tmdb/refresh-all", admin.TMDBRefreshAll)
 	}

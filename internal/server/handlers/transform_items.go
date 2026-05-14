@@ -137,7 +137,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 				"Index":                  s.ID,
 				"IsExternal":             true,
 				"DeliveryMethod":         "External",
-				"DeliveryUrl":            fmt.Sprintf("/emby/videos/%s/subtitles/%d?api_key=%s", m.UUID, s.ID, apiKey),
+				"DeliveryUrl":            fmt.Sprintf("/emby/Videos/%s/Subtitles/%d?api_key=%s", m.UUID, s.ID, apiKey),
 				"IsExternalUrl":          false,
 				"IsTextSubtitleStream":   true,
 				"SupportsExternalStream": true,
@@ -151,7 +151,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 
 		var directStreamURL any
 		if playSessionID != "" {
-			directStreamURL = fmt.Sprintf("/videos/%s/original.strm?api_key=%s", m.UUID, apiKey)
+			directStreamURL = fmt.Sprintf("/Videos/%s/original.strm?line=&api_key=%s", m.UUID, apiKey)
 		}
 
 		item := map[string]any{
@@ -166,7 +166,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 			"IsRemote":                   true,
 			"RunTimeTicks":               m.FileSecond * emby.TicksPerSecond,
 			"HasMixedProtocols":          false,
-			"SupportsTranscoding":        false,
+			"SupportsTranscoding":        true,
 			"SupportsDirectStream":       true,
 			"SupportsDirectPlay":         true,
 			"IsInfiniteStream":           false,

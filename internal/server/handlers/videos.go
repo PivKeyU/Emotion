@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -145,8 +146,20 @@ func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	playURL = encodeRedirectURL(playURL)
 	v.cache.Set(ctx, cacheKey, playURL, cacheTTL)
 	http.Redirect(w, r, playURL, http.StatusPermanentRedirect)
+}
+
+func encodeRedirectURL(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return raw
+	}
+	return u.String()
 }
 
 // Subtitle resolves a subtitle id to its hosted URL.

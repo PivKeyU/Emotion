@@ -52,6 +52,8 @@ type ScanOptions struct {
 	Root string
 	// FollowSymlinks enables following symlinks during walk.
 	FollowSymlinks bool
+	// OnDir is called whenever the walker visits a directory.
+	OnDir func(path string, seen int)
 }
 
 // Scan walks the tree once and returns a map of directory -> DirFiles.
@@ -62,6 +64,7 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 		return nil, err
 	}
 	result := map[string]*DirFiles{}
+	dirsSeen := 0
 
 	walkFn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -69,6 +72,10 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 			return nil
 		}
 		if d.IsDir() {
+			dirsSeen++
+			if opts.OnDir != nil {
+				opts.OnDir(path, dirsSeen)
+			}
 			return nil
 		}
 		// Skip hidden files (macOS ._foo, .DS_Store, etc.)

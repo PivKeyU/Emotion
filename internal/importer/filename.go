@@ -17,6 +17,8 @@ var (
 	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show.Name.1x02"
 	reSxxExx = regexp.MustCompile(`(?i)[Ss](\d{1,2})[\s._]*[Ee](\d{1,4})`)
 	reNxN    = regexp.MustCompile(`(?i)(?:^|[\s._\-])(\d{1,2})x(\d{1,4})(?:[\s._\-]|$)`)
+	// Chinese/Jellyfin-style episode markers: 第01集, 第 1 话, EP01, 01集.
+	reChineseEpisode = regexp.MustCompile(`(?i)(?:第|ep|episode|e)?[\s._\-]*(\d{1,4})[\s._\-]*(?:集|话|話)`)
 	// "Season 1" / "season01" / "第一季" / "第 1 季"
 	reSeasonWord    = regexp.MustCompile(`(?i)season[\s._\-]*(\d{1,3})`)
 	reSeasonChinese = regexp.MustCompile(`第\s*(\d{1,3})\s*[季部]`)
@@ -38,6 +40,10 @@ type ParsedName struct {
 	Year    int
 	Season  int // 0 when unknown
 	Episode int // 0 when unknown
+	// WeakEpisode is true when the only episode signal is a bare number such as
+	// "01.mkv". Callers should require extra TV context before classifying it as
+	// an episode.
+	WeakEpisode bool
 	// Provider-assigned ids found in "[tmdb=N]" / "[imdb=ttN]" / "[tvdb=N]" tags.
 	TMDBID string
 	IMDBID string
@@ -126,6 +132,12 @@ func parseBase(s string) ParsedName {
 		p.Year = extractYear(s)
 		return p
 	}
+	if m := reChineseEpisode.FindStringSubmatch(s); len(m) == 2 {
+		p.Episode, _ = strconv.Atoi(m[1])
+		p.Title = cleanTitle(reChineseEpisode.Split(s, 2)[0])
+		p.Year = extractYear(s)
+		return p
+	}
 
 	// 3. Title (Year) — movie shape.
 	if m := reTitleYear.FindStringSubmatch(s); len(m) >= 3 {
@@ -141,6 +153,7 @@ func parseBase(s string) ParsedName {
 			// Treat as episode only if it's a reasonable episode number; leave Season=0
 			// so caller can infer from parent folder.
 			p.Episode = n
+			p.WeakEpisode = true
 			// Don't put the number in the title.
 			p.Title = cleanTitle(reEpisodeOnly.ReplaceAllString(s, ""))
 			p.Year = extractYear(s)
