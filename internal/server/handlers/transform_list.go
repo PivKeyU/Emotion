@@ -216,14 +216,11 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 				"Played":                false,
 			},
 			"PrimaryImageAspectRatio": 0.67,
-			"ImageTags": map[string]any{
-				"Primary": rowID,
-			},
-			"BackdropImageTags": []any{},
-			"MediaType":         "Video",
-			"CanDelete":         false,
-			"CanDownload":       false,
+			"MediaType":               "Video",
+			"CanDelete":               false,
+			"CanDownload":             false,
 		}
+		t.applyImageFields(ctx, item, emby.ItemIDTypeVideoList, id, rowID, "", 0)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

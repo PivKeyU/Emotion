@@ -266,7 +266,7 @@ func (t *Transform) itemInfoLibrary(ctx context.Context, numericID int64, itemID
 	if err != nil {
 		return nil, nil //nolint:nilerr
 	}
-	return map[string]any{
+	item := map[string]any{
 		"Name":                  name,
 		"Id":                    itemID,
 		"Guid":                  itemID,
@@ -284,11 +284,11 @@ func (t *Transform) itemInfoLibrary(ctx context.Context, numericID int64, itemID
 			"Played":                false,
 		},
 		"PrimaryImageAspectRatio": 1.7,
-		"ImageTags":               map[string]any{"Primary": itemID},
-		"BackdropImageTags":       []any{},
 		"LockData":                true,
 		"ServerId":                t.cfg.EmbyID,
-	}, nil
+	}
+	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoLibrary, numericID, itemID, "", 0)
+	return item, nil
 }
 
 func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, itemID string, hasFavorited, canDownload bool) (map[string]any, error) {
@@ -337,7 +337,7 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 		mediaSources, _ = t.VideoMediaSources(ctx, numericID, 0, true, "", "")
 	}
 
-	return map[string]any{
+	item := map[string]any{
 		"Name":                  title,
 		"OriginalTitle":         nullStr(originTitle),
 		"Id":                    itemID,
@@ -376,23 +376,27 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 			"IsFavorite":            hasFavorited,
 			"Played":                uvr.IsComplete,
 		},
-		"ChildCount":              childCount,
-		"RecursiveItemCount":      childCount,
-		"DisplayPreferencesId":    itemID,
-		"AirDays":                 []any{},
-		"PrimaryImageAspectRatio": 0.67,
-		"MediaStreams":            []any{},
-		"PartCount":               1,
-		"DisplayOrder":            "Aired",
-		"ImageTags":               map[string]any{"Primary": itemID},
-		"BackdropImageTags":       []any{},
-		"Chapters":                []any{},
-		"MediaType":               "Video",
-		"LockedFields":            []any{},
-		"LockData":                true,
-		"ServerId":                t.cfg.EmbyID,
-		"Etag":                    itemID,
-	}, nil
+		"ChildCount":           childCount,
+		"RecursiveItemCount":   childCount,
+		"DisplayPreferencesId": itemID,
+		"AirDays":              []any{},
+		"MediaStreams":         []any{},
+		"PartCount":            1,
+		"DisplayOrder":         "Aired",
+		"Chapters":             []any{},
+		"MediaType":            "Video",
+		"LockedFields":         []any{},
+		"LockData":             true,
+		"ServerId":             t.cfg.EmbyID,
+		"Etag":                 itemID,
+	}
+	if isMovie {
+		item["PrimaryImageAspectRatio"] = 0.67
+	} else {
+		item["PrimaryImageAspectRatio"] = 0.67
+	}
+	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoList, numericID, itemID, "", 0)
+	return item, nil
 }
 
 func (t *Transform) itemInfoSeason(ctx context.Context, numericID int64, itemID string, hasFavorited, canDownload bool) (map[string]any, error) {
@@ -420,7 +424,8 @@ func (t *Transform) itemInfoSeason(ctx context.Context, numericID int64, itemID 
 		"SELECT COUNT(*) FROM video_episode WHERE video_season_id = ? AND deleted_at IS NULL", numericID,
 	).Scan(&childCount)
 
-	return map[string]any{
+	seriesItemID := emby.ItemID(emby.ItemIDTypeVideoList, videoListID)
+	item := map[string]any{
 		"Name":                    title,
 		"Id":                      itemID,
 		"DateCreated":             emby.FormatTime(createdAt),
@@ -457,18 +462,17 @@ func (t *Transform) itemInfoSeason(ctx context.Context, numericID int64, itemID 
 			"Played":                false,
 		},
 		"ChildCount":              childCount,
-		"SeriesId":                emby.ItemID(emby.ItemIDTypeVideoList, videoListID),
+		"SeriesId":                seriesItemID,
 		"SeriesName":              seriesName,
 		"DisplayPreferencesId":    "",
 		"PrimaryImageAspectRatio": 0.6,
-		"SeriesPrimaryImageTag":   "",
-		"ImageTags":               map[string]any{"Primary": itemID},
-		"BackdropImageTags":       []any{},
 		"LockedFields":            []any{},
 		"LockData":                true,
 		"ServerId":                t.cfg.EmbyID,
 		"Etag":                    itemID,
-	}, nil
+	}
+	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoSeason, numericID, itemID, seriesItemID, videoListID)
+	return item, nil
 }
 
 func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64, itemID string, hasFavorited, canDownload bool) (map[string]any, error) {
@@ -503,7 +507,9 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 	uvr, _ := t.GetUserVideoRecord(ctx, userID, videoListID, numericID)
 	mediaSources, _ := t.VideoMediaSources(ctx, videoListID, numericID, true, "", "")
 
-	return map[string]any{
+	seriesItemID := emby.ItemID(emby.ItemIDTypeVideoList, videoListID)
+	seasonItemID := emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID)
+	item := map[string]any{
 		"Name":                    title,
 		"Id":                      itemID,
 		"DateCreated":             emby.FormatTime(createdAt),
@@ -543,22 +549,51 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 			"IsFavorite":            hasFavorited,
 			"Played":                uvr.IsComplete,
 		},
-		"SeriesId":                emby.ItemID(emby.ItemIDTypeVideoList, videoListID),
+		"SeriesId":                seriesItemID,
 		"SeriesName":              seriesName,
-		"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID),
+		"SeasonId":                seasonItemID,
 		"SeasonName":              seasonTitle,
 		"DisplayPreferencesId":    "",
 		"PrimaryImageAspectRatio": 1.7,
-		"SeriesPrimaryImageTag":   "",
 		"PartCount":               0,
-		"ImageTags":               map[string]any{"Primary": itemID},
-		"BackdropImageTags":       []any{},
 		"MediaType":               "Video",
 		"LockedFields":            []any{},
 		"LockData":                true,
 		"ServerId":                t.cfg.EmbyID,
 		"Etag":                    itemID,
-	}, nil
+	}
+	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoEpisode, numericID, itemID, seriesItemID, videoListID)
+	return item, nil
+}
+
+func (t *Transform) applyImageFields(ctx context.Context, item map[string]any, kind string, numericID int64, itemID, seriesItemID string, seriesID int64) {
+	item["ImageTags"] = map[string]any{}
+	item["BackdropImageTags"] = []any{}
+
+	if t.hasImage(ctx, kind, numericID, db.ImageTypePrimary) {
+		item["ImageTags"] = map[string]any{"Primary": itemID}
+		item["PrimaryImageTag"] = itemID
+		return
+	}
+	if seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypePrimary) {
+		item["PrimaryImageItemId"] = seriesItemID
+		item["SeriesPrimaryImageTag"] = seriesItemID
+		item["ImageTags"] = map[string]any{"Primary": seriesItemID}
+		return
+	}
+	if seriesItemID != "" {
+		item["SeriesPrimaryImageTag"] = ""
+	}
+}
+
+func (t *Transform) hasImage(ctx context.Context, kind string, numericID int64, imageType string) bool {
+	var exists int64
+	_ = t.db.QueryRowContext(ctx, `
+		SELECT 1 FROM video_image
+		WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
+		LIMIT 1
+	`, kind, numericID, imageType).Scan(&exists)
+	return exists > 0
 }
 
 func nullStr(ns db.NullString) string {

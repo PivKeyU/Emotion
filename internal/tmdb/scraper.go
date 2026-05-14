@@ -42,11 +42,15 @@ func (s *Scraper) Enabled() bool { return s != nil && s.client != nil && s.clien
 // ScrapeResult is the summary of a single list (movie/series) scrape.
 type ScrapeResult struct {
 	VideoListID     int64  `json:"video_list_id"`
+	VideoType       string `json:"video_type,omitempty"`
+	Title           string `json:"title,omitempty"`
 	MatchedTMDBID   string `json:"matched_tmdb_id,omitempty"`
+	MatchedTitle    string `json:"matched_title,omitempty"`
 	UpdatedFields   int    `json:"updated_fields"`
 	ImagesAttached  int    `json:"images_attached"`
 	SeasonsUpdated  int    `json:"seasons_updated"`
 	EpisodesUpdated int    `json:"episodes_updated"`
+	Failed          bool   `json:"failed,omitempty"`
 	Skipped         bool   `json:"skipped,omitempty"`
 	Reason          string `json:"reason,omitempty"`
 }
@@ -88,6 +92,8 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 	if err != nil {
 		return nil, fmt.Errorf("load video_list: %w", err)
 	}
+	res.VideoType = videoType
+	res.Title = title
 
 	// Step 1: resolve a TMDB id.
 	resolvedID, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, title, yearOfTime(dateAir))
@@ -109,6 +115,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		if err != nil {
 			return nil, fmt.Errorf("get movie: %w", err)
 		}
+		res.MatchedTitle = movie.Title
 		if err := s.applyMovie(ctx, videoListID, movie, res,
 			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
@@ -119,6 +126,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		if err != nil {
 			return nil, fmt.Errorf("get tv: %w", err)
 		}
+		res.MatchedTitle = show.Name
 		if err := s.applyTV(ctx, videoListID, show, res,
 			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
@@ -520,7 +528,7 @@ func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool
 
 	// Items needing scrape: description NULL/"" OR missing Primary image.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT vl.id FROM video_list vl
+		SELECT vl.id, vl.video_type, vl.title FROM video_list vl
 		WHERE vl.deleted_at IS NULL
 		  AND (
 			vl.description IS NULL OR vl.description = ''
@@ -538,26 +546,38 @@ func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool
 	}
 	defer rows.Close()
 
-	var ids []int64
+	type batchItem struct {
+		id        int64
+		videoType string
+		title     string
+	}
+	var ids []batchItem
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err == nil {
-			ids = append(ids, id)
+		var item batchItem
+		if err := rows.Scan(&item.id, &item.videoType, &item.title); err == nil {
+			ids = append(ids, item)
 		}
 	}
 
-	for _, id := range ids {
+	for _, item := range ids {
 		if err := ctx.Err(); err != nil {
 			rep.Errors = append(rep.Errors, err.Error())
 			break
 		}
-		res, err := s.ScrapeVideoList(ctx, id, force)
+		rep.Processed++
+		res, err := s.ScrapeVideoList(ctx, item.id, force)
 		if err != nil {
 			rep.Failed++
-			rep.Errors = append(rep.Errors, fmt.Sprintf("id=%d: %v", id, err))
+			rep.Errors = append(rep.Errors, fmt.Sprintf("id=%d %s: %v", item.id, item.title, err))
+			rep.Items = append(rep.Items, ScrapeResult{
+				VideoListID: item.id,
+				VideoType:   item.videoType,
+				Title:       item.title,
+				Failed:      true,
+				Reason:      err.Error(),
+			})
 			continue
 		}
-		rep.Processed++
 		if res.Skipped {
 			rep.Skipped++
 		} else {

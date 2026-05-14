@@ -125,14 +125,26 @@ func (i *Items) Image(w http.ResponseWriter, r *http.Request) {
 		LIMIT 1
 	`, kind, numericID, imageType).Scan(&pathType, &pathURL)
 	if err != nil {
-		WriteStatus(w, http.StatusForbidden)
-		return
+		if kind == emby.ItemIDTypeVideoSeason || kind == emby.ItemIDTypeVideoEpisode {
+			parentKind, parentID, ok := i.parentImageTarget(ctx, kind, numericID)
+			if ok {
+				err = i.db.QueryRowContext(ctx, `
+					SELECT path_type, path_url FROM video_image
+					WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
+					LIMIT 1
+				`, parentKind, parentID, imageType).Scan(&pathType, &pathURL)
+			}
+		}
+		if err != nil {
+			WriteStatus(w, http.StatusNotFound)
+			return
+		}
 	}
 
 	url := pathURL.String
 	switch pathType.String {
 	case db.ImagePathTypeTMDB:
-		url = "https://image.tmdb.org/t/p/w400" + pathURL.String
+		url = "https://image.tmdb.org/t/p/w500" + pathURL.String
 	case db.ImagePathTypeDouban:
 		// Douban URLs are usually stored verbatim; keep as-is.
 	case db.PathTypeLocal:
@@ -153,6 +165,26 @@ func (i *Items) Image(w http.ResponseWriter, r *http.Request) {
 
 	i.cache.Set(ctx, cacheKey, url, time.Hour)
 	http.Redirect(w, r, url, http.StatusMovedPermanently)
+}
+
+func (i *Items) parentImageTarget(ctx context.Context, kind string, numericID int64) (string, int64, bool) {
+	switch kind {
+	case emby.ItemIDTypeVideoSeason:
+		var listID int64
+		if err := i.db.QueryRowContext(ctx,
+			"SELECT video_list_id FROM video_season WHERE id = ? AND deleted_at IS NULL LIMIT 1", numericID,
+		).Scan(&listID); err == nil && listID > 0 {
+			return emby.ItemIDTypeVideoList, listID, true
+		}
+	case emby.ItemIDTypeVideoEpisode:
+		var listID int64
+		if err := i.db.QueryRowContext(ctx,
+			"SELECT video_list_id FROM video_episode WHERE id = ? AND deleted_at IS NULL LIMIT 1", numericID,
+		).Scan(&listID); err == nil && listID > 0 {
+			return emby.ItemIDTypeVideoList, listID, true
+		}
+	}
+	return "", 0, false
 }
 
 // PlaybackInfo returns MediaSources + PlaySessionId for a given item.
