@@ -21,10 +21,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/PivKeyU/Emotion/internal/auth"
 	"github.com/PivKeyU/Emotion/internal/config"
 	"github.com/PivKeyU/Emotion/internal/db"
 	"github.com/PivKeyU/Emotion/internal/emby"
 	"github.com/PivKeyU/Emotion/internal/importer"
+	"github.com/PivKeyU/Emotion/internal/logger"
 	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 	"github.com/PivKeyU/Emotion/internal/tmdb"
 )
@@ -56,7 +58,7 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		client = tmdb.NewClient(cfg.TMDBAPIKey, tmdb.WithLanguage(cfg.TMDBLanguage))
 		scraper = tmdb.NewScraper(client, database, log)
 	}
-	return &Admin{
+	a := &Admin{
 		db:        database,
 		cfg:       cfg,
 		log:       log,
@@ -66,6 +68,13 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		scanJobs:  map[string]*scanJob{},
 		watchJobs: map[string]*watchJob{},
 	}
+	settings := a.loadTMDBSettings(context.Background())
+	a.cfg.TMDBAutoScrape = settings.AutoScrape
+	if key := a.rawSetting(context.Background(), "tmdb_api_key", cfg.TMDBAPIKey); strings.TrimSpace(key) != "" {
+		a.rebuildTMDB(key, settings.Language)
+	}
+	go a.startConfiguredWatchers()
+	return a
 }
 
 func (a *Admin) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
@@ -76,16 +85,102 @@ func (a *Admin) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// LibrariesList returns every library (admin view).
-// GET /admin/libraries
-func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
+type loginRequest struct {
+	APIKey string `json:"api_key"`
+}
+
+// Login validates the bootstrap admin key and returns a dashboard session token.
+// POST /admin/login
+func (a *Admin) Login(w http.ResponseWriter, r *http.Request) {
+	var body loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	if strings.TrimSpace(a.cfg.APIKey) == "" {
+		WriteText(w, http.StatusServiceUnavailable, "server API_KEY is not configured")
+		return
+	}
+	if body.APIKey != a.cfg.APIKey {
+		a.log.Warn("admin login failed", "category", "auth")
+		WriteText(w, http.StatusUnauthorized, "登录失败")
+		return
+	}
+	token := auth.RandomToken(32)
+	expires := time.Now().Add(7 * 24 * time.Hour)
+	if _, err := a.db.ExecContext(r.Context(), `
+		INSERT INTO admin_session (token, expires_at)
+		VALUES (?, ?)
+	`, token, expires); err != nil {
+		a.log.Error("admin session create failed", "category", "auth", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	a.log.Info("admin login ok", "category", "auth")
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"token":      token,
+		"expires_at": expires,
+	})
+}
+
+func (a *Admin) hydrateScanRequest(ctx context.Context, body *scanRequest) error {
+	if body.LibraryID <= 0 {
+		return errors.New("library_id is required")
+	}
+	var (
+		role sql.NullString
+		root sql.NullString
+	)
+	if err := a.db.QueryRowContext(ctx,
+		"SELECT role, root_path FROM library WHERE id = ? AND deleted_at IS NULL LIMIT 1", body.LibraryID,
+	).Scan(&role, &root); err != nil {
+		return err
+	}
+	if strings.TrimSpace(body.DefaultType) == "" && role.Valid {
+		body.DefaultType = role.String
+	}
+	if strings.TrimSpace(body.Root) == "" && root.Valid {
+		body.Root = root.String
+	}
+	if strings.TrimSpace(body.Root) != "" {
+		_, _ = a.db.ExecContext(ctx,
+			"UPDATE library SET root_path = ?, updated_at = NOW() WHERE id = ?", body.Root, body.LibraryID)
+	}
+	return nil
+}
+
+// Logs returns captured backend logs for the dashboard.
+// GET /admin/logs?level=&category=&limit=200
+func (a *Admin) Logs(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
-	rows, err := a.db.QueryContext(r.Context(),
-		`SELECT id, name, role, created_at FROM library
-		 WHERE deleted_at IS NULL ORDER BY id ASC`)
+	limit := parsePositiveInt(r.URL.Query().Get("limit"), 200)
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"items": logger.Recent(r.URL.Query().Get("level"), r.URL.Query().Get("category"), limit),
+	})
+}
+
+type apiKeyCreateRequest struct {
+	Name   string `json:"name"`
+	Remark string `json:"remark"`
+}
+
+// APIKeysList lists server-generated keys without revealing the secret.
+// GET /admin/api-keys
+func (a *Admin) APIKeysList(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT id, name, COALESCE(remark, ''), token_prefix, created_at, last_used_at
+		FROM admin_api_key
+		WHERE revoked_at IS NULL
+		ORDER BY id DESC
+	`)
 	if err != nil {
+		a.log.Error("api key list failed", "category", "auth", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
@@ -93,15 +188,313 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 	out := []any{}
 	for rows.Next() {
 		var (
-			id        int64
-			name      string
-			role      sql.NullString
-			createdAt sql.NullTime
+			id       int64
+			name     string
+			remark   string
+			prefix   string
+			created  time.Time
+			lastUsed sql.NullTime
 		)
-		if err := rows.Scan(&id, &name, &role, &createdAt); err != nil {
+		if err := rows.Scan(&id, &name, &remark, &prefix, &created, &lastUsed); err != nil {
 			continue
 		}
-		m := map[string]any{"id": id, "name": name, "role": role.String}
+		m := map[string]any{
+			"id":           id,
+			"name":         name,
+			"remark":       remark,
+			"token_prefix": prefix,
+			"created_at":   created,
+		}
+		if lastUsed.Valid {
+			m["last_used_at"] = lastUsed.Time
+		}
+		out = append(out, m)
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+// APIKeyCreate creates a per-tool API key. The clear token is returned once.
+// POST /admin/api-keys
+func (a *Admin) APIKeyCreate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body apiKeyCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	body.Name = strings.TrimSpace(body.Name)
+	body.Remark = strings.TrimSpace(body.Remark)
+	if body.Name == "" {
+		WriteText(w, http.StatusBadRequest, "name required")
+		return
+	}
+	token := "emo_" + auth.RandomToken(32)
+	prefix := token
+	if len(prefix) > 16 {
+		prefix = prefix[:16]
+	}
+	res, err := a.db.ExecContext(r.Context(), `
+		INSERT INTO admin_api_key (name, remark, token_hash, token_prefix)
+		VALUES (?, ?, ?, ?)
+	`, body.Name, nullableString(body.Remark), hashToken(token), prefix)
+	if err != nil {
+		a.log.Error("api key create failed", "category", "auth", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	id, _ := res.LastInsertId()
+	a.log.Info("admin api key created", "category", "auth", "id", id, "name", body.Name)
+	WriteJSON(w, http.StatusCreated, map[string]any{
+		"id":           id,
+		"name":         body.Name,
+		"remark":       body.Remark,
+		"token_prefix": prefix,
+		"token":        token,
+	})
+}
+
+// APIKeyRevoke revokes a generated API key.
+// DELETE /admin/api-keys/{id}
+func (a *Admin) APIKeyRevoke(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	if _, err := a.db.ExecContext(r.Context(),
+		"UPDATE admin_api_key SET revoked_at = NOW() WHERE id = ? AND revoked_at IS NULL", id); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	a.log.Info("admin api key revoked", "category", "auth", "id", id)
+	WriteStatus(w, http.StatusNoContent)
+}
+
+type tmdbSettings struct {
+	APIKey     string `json:"api_key,omitempty"`
+	Configured bool   `json:"configured"`
+	Language   string `json:"language"`
+	AutoScrape bool   `json:"auto_scrape"`
+}
+
+type tmdbSettingsRequest struct {
+	APIKey     string `json:"api_key"`
+	Language   string `json:"language"`
+	AutoScrape bool   `json:"auto_scrape"`
+	ClearKey   bool   `json:"clear_key"`
+}
+
+// TMDBSettingsGet returns the editable metadata settings, masking the token.
+// GET /admin/tmdb/settings
+func (a *Admin) TMDBSettingsGet(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	s := a.loadTMDBSettings(r.Context())
+	WriteJSON(w, http.StatusOK, s)
+}
+
+// TMDBSettingsUpdate stores TMDB settings from the dashboard.
+// POST /admin/tmdb/settings
+func (a *Admin) TMDBSettingsUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body tmdbSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	lang := strings.TrimSpace(body.Language)
+	if lang == "" {
+		lang = "zh-CN"
+	}
+	current := a.rawSetting(r.Context(), "tmdb_api_key", a.cfg.TMDBAPIKey)
+	apiKey := strings.TrimSpace(body.APIKey)
+	if body.ClearKey {
+		apiKey = ""
+	} else if apiKey == "" {
+		apiKey = current
+	}
+	if err := a.saveSetting(r.Context(), "tmdb_api_key", apiKey); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if err := a.saveSetting(r.Context(), "tmdb_language", lang); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if err := a.saveSetting(r.Context(), "tmdb_auto_scrape", strconv.FormatBool(body.AutoScrape)); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	a.rebuildTMDB(apiKey, lang)
+	a.cfg.TMDBAutoScrape = body.AutoScrape
+	a.log.Info("tmdb settings updated", "category", "tmdb", "language", lang, "auto_scrape", body.AutoScrape, "configured", apiKey != "")
+	WriteJSON(w, http.StatusOK, a.loadTMDBSettings(r.Context()))
+}
+
+// TMDBSettingsTest checks whether TMDB responds with the current or submitted config.
+// POST /admin/tmdb/settings/test
+func (a *Admin) TMDBSettingsTest(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body tmdbSettingsRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+	lang := strings.TrimSpace(body.Language)
+	if lang == "" {
+		lang = a.rawSetting(r.Context(), "tmdb_language", a.cfg.TMDBLanguage)
+	}
+	apiKey := strings.TrimSpace(body.APIKey)
+	if apiKey == "" {
+		apiKey = a.rawSetting(r.Context(), "tmdb_api_key", a.cfg.TMDBAPIKey)
+	}
+	client := tmdb.NewClient(apiKey, tmdb.WithLanguage(lang))
+	if !client.Enabled() {
+		WriteText(w, http.StatusBadRequest, "TMDB API key required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	results, err := client.SearchMovie(ctx, "Inception", 2010)
+	if err != nil {
+		a.log.Warn("tmdb test failed", "category", "tmdb", "err", err)
+		WriteText(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"language": lang,
+		"results":  len(results),
+	})
+}
+
+func (a *Admin) loadTMDBSettings(ctx context.Context) tmdbSettings {
+	key := a.rawSetting(ctx, "tmdb_api_key", a.cfg.TMDBAPIKey)
+	lang := a.rawSetting(ctx, "tmdb_language", a.cfg.TMDBLanguage)
+	if strings.TrimSpace(lang) == "" {
+		lang = "zh-CN"
+	}
+	autoRaw := a.rawSetting(ctx, "tmdb_auto_scrape", strconv.FormatBool(a.cfg.TMDBAutoScrape))
+	auto, _ := strconv.ParseBool(autoRaw)
+	return tmdbSettings{
+		Configured: strings.TrimSpace(key) != "",
+		Language:   lang,
+		AutoScrape: auto,
+	}
+}
+
+func (a *Admin) rawSetting(ctx context.Context, key, fallback string) string {
+	var v string
+	err := a.db.QueryRowContext(ctx, "SELECT value FROM app_setting WHERE key = ? LIMIT 1", key).Scan(&v)
+	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func (a *Admin) saveSetting(ctx context.Context, key, value string) error {
+	_, err := a.db.DB.ExecContext(ctx, db.Rebind(`
+		INSERT INTO app_setting (key, value, updated_at)
+		VALUES (?, ?, NOW())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+	`), key, value)
+	return err
+}
+
+func (a *Admin) rebuildTMDB(apiKey, language string) {
+	if strings.TrimSpace(apiKey) == "" {
+		a.tmdb = nil
+		a.scraper = nil
+		return
+	}
+	a.tmdb = tmdb.NewClient(apiKey, tmdb.WithLanguage(language))
+	a.scraper = tmdb.NewScraper(a.tmdb, a.db, a.log)
+}
+
+// LibrariesList returns every library (admin view).
+// GET /admin/libraries
+func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT
+			l.id,
+			l.name,
+			COALESCE(l.role, ''),
+			COALESCE(l.root_path, ''),
+			l.watch_enabled,
+			l.watch_interval_seconds,
+			l.created_at,
+			COUNT(DISTINCT vl.id) AS item_count,
+			COUNT(DISTINCT CASE WHEN vl.video_type = 'movie' THEN vl.id END) AS movie_count,
+			COUNT(DISTINCT CASE WHEN vl.video_type = 'tv' THEN vl.id END) AS series_count,
+			COUNT(DISTINCT ve.id) AS episode_count,
+			COUNT(DISTINCT vm.id) AS media_count
+		FROM library l
+		LEFT JOIN video_list vl
+			ON vl.video_library_id = l.id AND vl.deleted_at IS NULL
+		LEFT JOIN video_episode ve
+			ON ve.video_list_id = vl.id AND ve.deleted_at IS NULL
+		LEFT JOIN video_media vm
+			ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
+		WHERE l.deleted_at IS NULL
+		GROUP BY l.id, l.name, l.role, l.root_path, l.watch_enabled, l.watch_interval_seconds, l.created_at
+		ORDER BY l.id ASC`)
+	if err != nil {
+		a.log.Error("library list failed", "category", "admin", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var (
+			id                   int64
+			name                 string
+			role                 string
+			rootPath             string
+			watchEnabled         bool
+			watchIntervalSeconds int
+			createdAt            sql.NullTime
+			itemCount            int64
+			movieCount           int64
+			seriesCount          int64
+			episodeCount         int64
+			mediaCount           int64
+		)
+		if err := rows.Scan(
+			&id, &name, &role, &rootPath, &watchEnabled, &watchIntervalSeconds, &createdAt,
+			&itemCount, &movieCount, &seriesCount, &episodeCount, &mediaCount,
+		); err != nil {
+			continue
+		}
+		m := map[string]any{
+			"id":                     id,
+			"name":                   name,
+			"role":                   role,
+			"root_path":              rootPath,
+			"watch_enabled":          watchEnabled,
+			"watch_interval_seconds": watchIntervalSeconds,
+			"item_count":             itemCount,
+			"movie_count":            movieCount,
+			"series_count":           seriesCount,
+			"episode_count":          episodeCount,
+			"media_count":            mediaCount,
+		}
+		if watcher := a.watchByLibrary(id); watcher != nil {
+			m["watcher"] = a.publicWatchJob(watcher)
+		}
 		if createdAt.Valid {
 			m["created_at"] = createdAt.Time
 		}
@@ -112,8 +505,11 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 
 // libraryCreateBody is the POST /admin/libraries body.
 type libraryCreateBody struct {
-	Name string `json:"name"`
-	Role string `json:"role"`
+	Name                 string `json:"name"`
+	Role                 string `json:"role"`
+	RootPath             string `json:"root_path"`
+	WatchEnabled         bool   `json:"watch_enabled"`
+	WatchIntervalSeconds int    `json:"watch_interval_seconds"`
 }
 
 // LibraryCreate creates a new library.
@@ -133,19 +529,88 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 		WriteText(w, http.StatusBadRequest, "name required")
 		return
 	}
-	role := sql.NullString{Valid: body.Role != "", String: body.Role}
+	role := nullableString(strings.TrimSpace(body.Role))
+	root := nullableString(strings.TrimSpace(body.RootPath))
+	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
 	res, err := a.db.ExecContext(r.Context(),
-		"INSERT INTO library (name, role) VALUES (?, ?)", body.Name, role)
+		"INSERT INTO library (name, role, root_path, watch_enabled, watch_interval_seconds) VALUES (?, ?, ?, ?, ?)",
+		body.Name, role, root, body.WatchEnabled, interval)
 	if err != nil {
-		a.log.Error("library create failed", "err", err)
+		a.log.Error("library create failed", "category", "admin", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
 	id, _ := res.LastInsertId()
+	if body.WatchEnabled && root.Valid {
+		a.startLibraryWatcher(context.Background(), id, root.String, body.Role, interval)
+	}
 	WriteJSON(w, http.StatusCreated, map[string]any{
-		"id":   id,
-		"name": body.Name,
-		"role": body.Role,
+		"id":                     id,
+		"name":                   body.Name,
+		"role":                   body.Role,
+		"root_path":              body.RootPath,
+		"watch_enabled":          body.WatchEnabled,
+		"watch_interval_seconds": interval,
+	})
+}
+
+// LibraryUpdate updates library metadata and watcher settings.
+// PATCH /admin/libraries/{id}
+func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	var body libraryCreateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	body.Name = strings.TrimSpace(body.Name)
+	body.Role = strings.TrimSpace(body.Role)
+	body.RootPath = strings.TrimSpace(body.RootPath)
+	if body.Name == "" {
+		WriteText(w, http.StatusBadRequest, "name required")
+		return
+	}
+	if body.WatchEnabled {
+		if body.RootPath == "" {
+			WriteText(w, http.StatusBadRequest, "root_path required when watch is enabled")
+			return
+		}
+		if info, err := os.Stat(body.RootPath); err != nil || !info.IsDir() {
+			WriteText(w, http.StatusBadRequest, "root_path does not exist: "+body.RootPath)
+			return
+		}
+	}
+	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
+	_, err = a.db.ExecContext(r.Context(), `
+		UPDATE library
+		SET name = ?, role = ?, root_path = ?, watch_enabled = ?, watch_interval_seconds = ?, updated_at = NOW()
+		WHERE id = ? AND deleted_at IS NULL
+	`, body.Name, nullableString(body.Role), nullableString(body.RootPath), body.WatchEnabled, interval, id)
+	if err != nil {
+		a.log.Error("library update failed", "category", "admin", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if body.WatchEnabled {
+		a.startLibraryWatcher(context.Background(), id, body.RootPath, body.Role, interval)
+	} else {
+		a.stopWatchByLibrary(id)
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"id":                     id,
+		"name":                   body.Name,
+		"role":                   body.Role,
+		"root_path":              body.RootPath,
+		"watch_enabled":          body.WatchEnabled,
+		"watch_interval_seconds": interval,
 	})
 }
 
@@ -165,6 +630,7 @@ func (a *Admin) LibraryDelete(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
+	a.stopWatchByLibrary(id)
 	WriteStatus(w, http.StatusNoContent)
 }
 
@@ -589,6 +1055,29 @@ func parsePositiveInt64(raw string, def int64) int64 {
 	return n
 }
 
+func nullableString(s string) sql.NullString {
+	s = strings.TrimSpace(s)
+	return sql.NullString{String: s, Valid: s != ""}
+}
+
+func normalizeWatchInterval(v int) int {
+	if v <= 0 {
+		return 30
+	}
+	if v < 5 {
+		return 5
+	}
+	if v > 3600 {
+		return 3600
+	}
+	return v
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // scanRequest is the POST body for /admin/library/scan.
 type scanRequest struct {
 	LibraryID      int64  `json:"library_id"`
@@ -634,8 +1123,12 @@ func (a *Admin) LibraryScan(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if body.Root == "" {
-		WriteText(w, http.StatusBadRequest, "root is required")
+	if err := a.hydrateScanRequest(r.Context(), &body); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			WriteText(w, http.StatusNotFound, "library not found")
+			return
+		}
+		WriteText(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if _, err := os.Stat(body.Root); err != nil {
@@ -674,8 +1167,12 @@ func (a *Admin) LibraryScanStart(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if body.Root == "" {
-		WriteText(w, http.StatusBadRequest, "root is required")
+	if err := a.hydrateScanRequest(r.Context(), &body); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			WriteText(w, http.StatusNotFound, "library not found")
+			return
+		}
+		WriteText(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if _, err := os.Stat(body.Root); err != nil {
@@ -811,6 +1308,7 @@ type watchRequest struct {
 
 type watchJob struct {
 	ID              string    `json:"id"`
+	LibraryID       int64     `json:"library_id"`
 	Status          string    `json:"status"`
 	StartedAt       time.Time `json:"started_at"`
 	LastCheckedAt   time.Time `json:"last_checked_at,omitempty"`
@@ -858,28 +1356,15 @@ func (a *Admin) LibraryWatchStart(w http.ResponseWriter, r *http.Request) {
 		interval = 5
 	}
 
-	id := randomScanID()
-	ctx, cancel := context.WithCancel(context.Background())
-	job := &watchJob{
-		ID:              id,
-		Status:          "running",
-		StartedAt:       time.Now(),
-		IntervalSeconds: interval,
-		Root:            body.Root,
-		cancel:          cancel,
+	if _, err := a.db.ExecContext(r.Context(), `
+		UPDATE library
+		SET root_path = ?, watch_enabled = TRUE, watch_interval_seconds = ?, updated_at = NOW()
+		WHERE id = ? AND deleted_at IS NULL
+	`, body.Root, interval, body.LibraryID); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
 	}
-	a.watchMu.Lock()
-	a.watchJobs[id] = job
-	a.watchMu.Unlock()
-
-	go a.runWatchJob(ctx, id, scanRequest{
-		LibraryID:      body.LibraryID,
-		Root:           body.Root,
-		DefaultType:    body.DefaultType,
-		FollowSymlinks: body.FollowSymlinks,
-		DryRun:         body.DryRun,
-		Scrape:         body.Scrape,
-	}, time.Duration(interval)*time.Second)
+	job := a.startLibraryWatcher(context.Background(), body.LibraryID, body.Root, body.DefaultType, interval)
 	WriteJSON(w, http.StatusAccepted, a.publicWatchJob(job))
 }
 
@@ -928,7 +1413,88 @@ func (a *Admin) LibraryWatchStop(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusNotFound)
 		return
 	}
+	if job.LibraryID > 0 {
+		_, _ = a.db.ExecContext(r.Context(),
+			"UPDATE library SET watch_enabled = FALSE, updated_at = NOW() WHERE id = ?", job.LibraryID)
+	}
 	WriteStatus(w, http.StatusNoContent)
+}
+
+func (a *Admin) startConfiguredWatchers() {
+	time.Sleep(500 * time.Millisecond)
+	rows, err := a.db.QueryContext(context.Background(), `
+		SELECT id, COALESCE(root_path, ''), COALESCE(role, ''), watch_interval_seconds
+		FROM library
+		WHERE deleted_at IS NULL AND watch_enabled = TRUE AND COALESCE(root_path, '') <> ''
+	`)
+	if err != nil {
+		a.log.Warn("load configured watchers failed", "category", "watch", "err", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var root, role string
+		var interval int
+		if err := rows.Scan(&id, &root, &role, &interval); err != nil {
+			continue
+		}
+		if info, err := os.Stat(root); err == nil && info.IsDir() {
+			a.startLibraryWatcher(context.Background(), id, root, role, normalizeWatchInterval(interval))
+		}
+	}
+}
+
+func (a *Admin) startLibraryWatcher(ctx context.Context, libraryID int64, root, defaultType string, interval int) *watchJob {
+	interval = normalizeWatchInterval(interval)
+	a.stopWatchByLibrary(libraryID)
+	id := randomScanID()
+	watchCtx, cancel := context.WithCancel(ctx)
+	job := &watchJob{
+		ID:              id,
+		LibraryID:       libraryID,
+		Status:          "running",
+		StartedAt:       time.Now(),
+		IntervalSeconds: interval,
+		Root:            root,
+		cancel:          cancel,
+	}
+	a.watchMu.Lock()
+	a.watchJobs[id] = job
+	a.watchMu.Unlock()
+	a.log.Info("library watcher started", "category", "watch", "library_id", libraryID, "root", root, "interval", interval)
+	go a.runWatchJob(watchCtx, id, scanRequest{
+		LibraryID:   libraryID,
+		Root:        root,
+		DefaultType: defaultType,
+	}, time.Duration(interval)*time.Second)
+	return job
+}
+
+func (a *Admin) stopWatchByLibrary(libraryID int64) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	for id, job := range a.watchJobs {
+		if job != nil && job.LibraryID == libraryID {
+			job.Status = "stopped"
+			if job.cancel != nil {
+				job.cancel()
+			}
+			delete(a.watchJobs, id)
+		}
+	}
+}
+
+func (a *Admin) watchByLibrary(libraryID int64) *watchJob {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	for _, job := range a.watchJobs {
+		if job != nil && job.LibraryID == libraryID && job.Status == "running" {
+			cp := *job
+			return &cp
+		}
+	}
+	return nil
 }
 
 func (a *Admin) runWatchJob(ctx context.Context, id string, req scanRequest, interval time.Duration) {
@@ -1021,6 +1587,7 @@ func (a *Admin) publicWatchJob(job *watchJob) map[string]any {
 	}
 	return map[string]any{
 		"id":               job.ID,
+		"library_id":       job.LibraryID,
 		"status":           job.Status,
 		"started_at":       job.StartedAt,
 		"last_checked_at":  job.LastCheckedAt,

@@ -1,7 +1,9 @@
 package server
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -36,7 +38,8 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			sw := &statusWriter{ResponseWriter: w, status: 200}
 			next.ServeHTTP(sw, r)
-			log.Debug("http",
+			log.Info("http",
+				"category", "http",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", sw.status,
@@ -118,11 +121,49 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Check admin API key first.
+			// Keep the bootstrap admin key valid as the master credential.
 			if deps.Config.APIKey != "" && token == deps.Config.APIKey {
 				ctx := ctxpkg.WithAuth(r.Context(), 0, token, true, true)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
+			}
+
+			// Check dashboard session tokens minted by /admin/login.
+			var adminSessionID int64
+			err := deps.DB.QueryRowContext(r.Context(), `
+				SELECT id FROM admin_session
+				WHERE token = ? AND revoked_at IS NULL
+				  AND (expires_at IS NULL OR expires_at > NOW())
+				LIMIT 1`, token,
+			).Scan(&adminSessionID)
+			if err == nil {
+				_, _ = deps.DB.ExecContext(r.Context(),
+					"UPDATE admin_session SET last_used_at = NOW() WHERE id = ?", adminSessionID)
+				ctx := ctxpkg.WithAuth(r.Context(), 0, token, true, true)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				deps.Logger.Error("admin session lookup failed", "category", "auth", "err", err)
+			}
+
+			// Check server-generated third-party API keys.
+			hash := tokenHash(token)
+			var adminKeyID int64
+			err = deps.DB.QueryRowContext(r.Context(), `
+				SELECT id FROM admin_api_key
+				WHERE token_hash = ? AND revoked_at IS NULL
+				LIMIT 1`, hash,
+			).Scan(&adminKeyID)
+			if err == nil {
+				_, _ = deps.DB.ExecContext(r.Context(),
+					"UPDATE admin_api_key SET last_used_at = NOW() WHERE id = ?", adminKeyID)
+				ctx := ctxpkg.WithAuth(r.Context(), 0, token, true, true)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				deps.Logger.Error("admin api key lookup failed", "category", "auth", "err", err)
 			}
 
 			// Look up user token.
@@ -130,7 +171,7 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 				tokenID int64
 				userID  int64
 			)
-			err := deps.DB.QueryRowContext(r.Context(),
+			err = deps.DB.QueryRowContext(r.Context(),
 				"SELECT id, user_id FROM token WHERE token = ? LIMIT 1", token,
 			).Scan(&tokenID, &userID)
 			if err != nil {
@@ -156,4 +197,9 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func tokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

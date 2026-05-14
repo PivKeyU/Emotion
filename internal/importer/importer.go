@@ -101,9 +101,31 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 	}
 
 	rep := &Report{StartedAt: time.Now()}
+	lastProgressAt := time.Time{}
+	lastWalked := 0
+	lastProcessed := 0
 	emitProgress := func(stage, current string, walked, processed, total int) {
 		if opts.Progress == nil {
 			return
+		}
+		now := time.Now()
+		force := stage == "queued" || stage == "walking" && walked <= 1 ||
+			stage == "importing" && processed == 0 || stage == "done" ||
+			stage == "failed" || stage == "canceled"
+		if !force {
+			if stage == "walking" && walked > 0 && walked-lastWalked < 100 && now.Sub(lastProgressAt) < 500*time.Millisecond {
+				return
+			}
+			if stage == "importing" && processed > 0 && processed-lastProcessed < 25 && now.Sub(lastProgressAt) < 500*time.Millisecond {
+				return
+			}
+		}
+		lastProgressAt = now
+		if walked > 0 {
+			lastWalked = walked
+		}
+		if processed > 0 {
+			lastProcessed = processed
 		}
 		snap := *rep
 		snap.Errors = append([]string(nil), rep.Errors...)
@@ -123,7 +145,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 		Root:           opts.Root,
 		FollowSymlinks: opts.FollowSymlinks,
 		OnDir: func(path string, seen int) {
-			if seen == 1 || seen%25 == 0 {
+			if seen == 1 || seen%100 == 0 {
 				emitProgress("walking", path, seen, 0, 0)
 			}
 		},
@@ -132,8 +154,8 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 		return nil, fmt.Errorf("scan: %w", err)
 	}
 	rep.Scanned = len(dirs)
-	emitProgress("importing", "", 0, 0, len(dirs))
-	log.Info("scan complete", "dirs", len(dirs))
+	emitProgress("importing", "", rep.Scanned, 0, len(dirs))
+	log.Info("scan complete", "category", "scan", "dirs", len(dirs))
 
 	// Ordered processing so parent-dir NFOs are visited before child directories.
 	keys := make([]string, 0, len(dirs))
@@ -153,11 +175,11 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 
 	for idx, dirPath := range keys {
 		bucket := dirs[dirPath]
-		emitProgress("importing", dirPath, 0, idx+1, len(keys))
+		emitProgress("importing", dirPath, rep.Scanned, idx+1, len(keys))
 		if err := ctx.Err(); err != nil {
 			rep.FinishedAt = time.Now()
 			rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
-			emitProgress("canceled", dirPath, 0, idx+1, len(keys))
+			emitProgress("canceled", dirPath, rep.Scanned, idx+1, len(keys))
 			return rep, err
 		}
 
@@ -167,7 +189,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 			series, err := i.upsertSeries(ctx, opts, bucket, showNFO)
 			if err != nil {
 				rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", dirPath, err))
-				log.Warn("upsert series failed", "dir", dirPath, "err", err)
+				log.Warn("upsert series failed", "category", "scan", "dir", dirPath, "err", err)
 				continue
 			}
 			activeSeries = &seriesCtx{
@@ -193,7 +215,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 			classified, err := i.classifyMedia(mediaPath, bucket, opts.DefaultType)
 			if err != nil {
 				rep.Skipped++
-				log.Debug("classify skipped", "path", mediaPath, "err", err)
+				log.Debug("classify skipped", "category", "scan", "path", mediaPath, "err", err)
 				continue
 			}
 			switch classified.kind {
@@ -201,7 +223,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 				movie, err := i.upsertMovie(ctx, opts, bucket, mediaPath, classified)
 				if err != nil {
 					rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", mediaPath, err))
-					log.Warn("upsert movie failed", "path", mediaPath, "err", err)
+					log.Warn("upsert movie failed", "category", "scan", "path", mediaPath, "err", err)
 					continue
 				}
 				rep.Movies++
@@ -215,7 +237,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 					series, err := i.upsertSeriesFromGuess(ctx, opts, bucket, classified)
 					if err != nil {
 						rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", mediaPath, err))
-						log.Warn("synth series failed", "path", mediaPath, "err", err)
+						log.Warn("synth series failed", "category", "scan", "path", mediaPath, "err", err)
 						continue
 					}
 					activeSeries = &seriesCtx{
@@ -230,7 +252,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 					classified, activeSeries.videoListID, activeSeries.showTitle)
 				if err != nil {
 					rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", mediaPath, err))
-					log.Warn("upsert episode failed", "path", mediaPath, "err", err)
+					log.Warn("upsert episode failed", "category", "scan", "path", mediaPath, "err", err)
 					continue
 				}
 				if sawNewSeason {
@@ -245,8 +267,9 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 
 	rep.FinishedAt = time.Now()
 	rep.Duration = rep.FinishedAt.Sub(rep.StartedAt).Milliseconds()
-	emitProgress("done", "", 0, len(keys), len(keys))
+	emitProgress("done", "", rep.Scanned, len(keys), len(keys))
 	log.Info("import finished",
+		"category", "scan",
 		"dirs", rep.Scanned, "movies", rep.Movies,
 		"series", rep.Series, "seasons", rep.Seasons, "episodes", rep.Episodes,
 		"errors", len(rep.Errors))
@@ -654,25 +677,23 @@ func (i *Importer) upsertMedia(
 	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(mediaPath)), ".")
 
 	// Look up existing media by path to make re-scans idempotent.
-	var (
-		existingID   int64
-		existingUUID string
-	)
+	var existingID int64
 	err = i.db.QueryRowContext(ctx, `
-		SELECT id, uuid FROM video_media
+		SELECT id FROM video_media
 		WHERE video_list_id = ?
 		  AND video_episode_id IS NOT DISTINCT FROM ?
 		  AND (path_url = ? OR name = ?)
 		LIMIT 1
-	`, videoListID, nullableInt64(videoEpisodeID), pathURL, name).Scan(&existingID, &existingUUID)
+	`, videoListID, nullableInt64(videoEpisodeID), pathURL, name).Scan(&existingID)
 
 	nullSeason := nullableInt64(videoSeasonID)
 	nullEp := nullableInt64(videoEpisodeID)
 	fileSizeN := nullableInt64(fileSize)
 
+	mediaID := existingID
 	if errors.Is(err, sql.ErrNoRows) {
 		uuid := newUUID()
-		_, insErr := i.db.ExecContext(ctx, `
+		res, insErr := i.db.ExecContext(ctx, `
 			INSERT INTO video_media
 				(uuid, video_list_id, video_season_id, video_episode_id,
 				 name, status, file_size, file_container, path_type, path_url)
@@ -682,6 +703,7 @@ func (i *Importer) upsertMedia(
 		if insErr != nil {
 			return fmt.Errorf("media insert: %w", insErr)
 		}
+		mediaID, _ = res.LastInsertId()
 	} else if err != nil {
 		return err
 	} else {
@@ -703,11 +725,7 @@ func (i *Importer) upsertMedia(
 		if !strings.HasPrefix(subBase, baseNoExt) {
 			continue
 		}
-		var mid int64
-		_ = i.db.QueryRowContext(ctx,
-			"SELECT id FROM video_media WHERE path_url = ? LIMIT 1", pathURL,
-		).Scan(&mid)
-		if mid == 0 {
+		if mediaID == 0 {
 			continue
 		}
 		codec := strings.TrimPrefix(strings.ToLower(filepath.Ext(subBase)), ".")
@@ -716,14 +734,14 @@ func (i *Importer) upsertMedia(
 		var existing int64
 		_ = i.db.QueryRowContext(ctx,
 			"SELECT id FROM video_subtitle WHERE video_media_id = ? AND path_url = ? LIMIT 1",
-			mid, sub).Scan(&existing)
+			mediaID, sub).Scan(&existing)
 		if existing > 0 {
 			continue
 		}
 		_, _ = i.db.ExecContext(ctx, `
 			INSERT INTO video_subtitle (video_media_id, title, codec, path_type, path_url)
 			VALUES (?, ?, ?, ?, ?)
-		`, mid, title, codec, db.PathTypeLocal, sub)
+		`, mediaID, title, codec, db.PathTypeLocal, sub)
 	}
 	return nil
 }

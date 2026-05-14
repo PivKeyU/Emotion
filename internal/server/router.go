@@ -20,10 +20,11 @@ func NewRouter(deps *Dependencies) http.Handler {
 	userH := handlers.NewUsers(deps.DB, deps.Config, deps.Logger)
 	items := handlers.NewItems(deps.DB, deps.Cache, deps.Config, deps.Logger)
 	dash := handlers.NewDashboard()
+	admin := handlers.NewAdmin(deps.DB, deps.Config, deps.Logger)
 
-	// Visual admin dashboard. The HTML is just a static asset; it prompts for
-	// an API key at runtime and calls authenticated /admin/* and /emby/* APIs
-	// on the user's behalf, so we expose it without the auth guard.
+	// Visual admin dashboard. The HTML is a public asset; /admin/login validates
+	// the bootstrap admin secret and returns a dashboard session token.
+	r.Post("/admin/login", admin.Login)
 	r.Get("/admin/ui", dash.Page)
 	r.Get("/admin/ui/", dash.Page)
 	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
@@ -47,14 +48,14 @@ func NewRouter(deps *Dependencies) http.Handler {
 		// --- authenticated endpoints ---
 		r.Group(func(r chi.Router) {
 			r.Use(authGuardBuilder(deps))
-			registerAuthedRoutes(r, prefix, deps)
+			registerAuthedRoutes(r, prefix, deps, admin)
 		})
 	}
 
 	return r
 }
 
-func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
+func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin *handlers.Admin) {
 	sys := handlers.NewSystem(deps.Config)
 	userH := handlers.NewUsers(deps.DB, deps.Config, deps.Logger)
 	items := handlers.NewItems(deps.DB, deps.Cache, deps.Config, deps.Logger)
@@ -145,13 +146,20 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies) {
 	// --- admin (manual library management) ---
 	// These sit under /admin (no /emby prefix parity — they're native to Emotion).
 	if prefix == "" {
-		admin := handlers.NewAdmin(deps.DB, deps.Config, deps.Logger)
 		r.Get("/admin/libraries", admin.LibrariesList)
 		r.Post("/admin/libraries", admin.LibraryCreate)
+		r.Patch("/admin/libraries/{id}", admin.LibraryUpdate)
 		r.Delete("/admin/libraries/{id}", admin.LibraryDelete)
 		r.Get("/admin/files", admin.FilesBrowse)
 		r.Get("/admin/media", admin.AdminMediaList)
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
+		r.Get("/admin/logs", admin.Logs)
+		r.Get("/admin/api-keys", admin.APIKeysList)
+		r.Post("/admin/api-keys", admin.APIKeyCreate)
+		r.Delete("/admin/api-keys/{id}", admin.APIKeyRevoke)
+		r.Get("/admin/tmdb/settings", admin.TMDBSettingsGet)
+		r.Post("/admin/tmdb/settings", admin.TMDBSettingsUpdate)
+		r.Post("/admin/tmdb/settings/test", admin.TMDBSettingsTest)
 		r.Post("/admin/library/scan", admin.LibraryScan)
 		r.Post("/admin/library/scan/start", admin.LibraryScanStart)
 		r.Get("/admin/library/scan/{id}", admin.LibraryScanStatus)

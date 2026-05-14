@@ -15,12 +15,15 @@ type (
 
 // Library mirrors the `library` table.
 type Library struct {
-	ID        int64
-	Name      string
-	Role      NullString
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt NullTime
+	ID                   int64
+	Name                 string
+	Role                 NullString
+	RootPath             NullString
+	WatchEnabled         bool
+	WatchIntervalSeconds int
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	DeletedAt            NullTime
 }
 
 // User mirrors the `user` table.

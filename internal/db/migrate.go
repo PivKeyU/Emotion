@@ -11,9 +11,49 @@ var migrations = []string{
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 		deleted_at TIMESTAMPTZ NULL,
 		name VARCHAR(255) NOT NULL,
-		role VARCHAR(255) NULL
+		role VARCHAR(255) NULL,
+		root_path TEXT NULL,
+		watch_enabled BOOLEAN NOT NULL DEFAULT false,
+		watch_interval_seconds INTEGER NOT NULL DEFAULT 30
 	)`,
+	`ALTER TABLE library ADD COLUMN IF NOT EXISTS root_path TEXT NULL`,
+	`ALTER TABLE library ADD COLUMN IF NOT EXISTS watch_enabled BOOLEAN NOT NULL DEFAULT false`,
+	`ALTER TABLE library ADD COLUMN IF NOT EXISTS watch_interval_seconds INTEGER NOT NULL DEFAULT 30`,
 	`CREATE INDEX IF NOT EXISTS idx_library_name ON library (name)`,
+	`CREATE INDEX IF NOT EXISTS idx_library_deleted ON library (deleted_at)`,
+
+	`CREATE TABLE IF NOT EXISTS admin_session (
+		id BIGSERIAL PRIMARY KEY,
+		token VARCHAR(64) NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_used_at TIMESTAMPTZ NULL,
+		expires_at TIMESTAMPTZ NULL,
+		revoked_at TIMESTAMPTZ NULL,
+		CONSTRAINT unx_admin_session_token UNIQUE (token)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_session_token ON admin_session (token)`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_session_revoked ON admin_session (revoked_at)`,
+
+	`CREATE TABLE IF NOT EXISTS admin_api_key (
+		id BIGSERIAL PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		remark TEXT NULL,
+		token_hash CHAR(64) NOT NULL,
+		token_prefix VARCHAR(16) NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_used_at TIMESTAMPTZ NULL,
+		revoked_at TIMESTAMPTZ NULL,
+		CONSTRAINT unx_admin_api_key_hash UNIQUE (token_hash)
+	)`,
+	`ALTER TABLE admin_api_key ADD COLUMN IF NOT EXISTS remark TEXT NULL`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_api_key_hash ON admin_api_key (token_hash)`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_api_key_revoked ON admin_api_key (revoked_at)`,
+
+	`CREATE TABLE IF NOT EXISTS app_setting (
+		key VARCHAR(128) PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+	)`,
 
 	`CREATE TABLE IF NOT EXISTS app_user (
 		id BIGSERIAL PRIMARY KEY,
@@ -182,6 +222,8 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_vm_list ON video_media (video_list_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_season ON video_media (video_season_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_episode ON video_media (video_episode_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_path_url ON video_media (path_url)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_list_episode_name ON video_media (video_list_id, video_episode_id, name)`,
 
 	`CREATE TABLE IF NOT EXISTS video_subtitle (
 		id BIGSERIAL PRIMARY KEY,
@@ -197,6 +239,7 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_vs_media ON video_subtitle (video_media_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vs_user ON video_subtitle (user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vs_media_path ON video_subtitle (video_media_id, path_url)`,
 
 	`CREATE TABLE IF NOT EXISTS video_genre (
 		id BIGSERIAL PRIMARY KEY,
