@@ -46,6 +46,9 @@ type Admin struct {
 
 	watchMu   sync.Mutex
 	watchJobs map[string]*watchJob
+
+	tmdbMu   sync.Mutex
+	tmdbJobs map[string]*tmdbRefreshJob
 }
 
 // NewAdmin constructs the handler.
@@ -67,6 +70,7 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		scraper:   scraper,
 		scanJobs:  map[string]*scanJob{},
 		watchJobs: map[string]*watchJob{},
+		tmdbJobs:  map[string]*tmdbRefreshJob{},
 	}
 	settings := a.loadTMDBSettings(context.Background())
 	a.cfg.TMDBAutoScrape = settings.AutoScrape
@@ -359,6 +363,7 @@ func (a *Admin) TMDBSettingsTest(w http.ResponseWriter, r *http.Request) {
 		apiKey = a.rawSetting(r.Context(), "tmdb_api_key", a.cfg.TMDBAPIKey)
 	}
 	client := tmdb.NewClient(apiKey, tmdb.WithLanguage(lang))
+	defer client.Close()
 	if !client.Enabled() {
 		WriteText(w, http.StatusBadRequest, "TMDB API key required")
 		return
@@ -412,6 +417,9 @@ func (a *Admin) saveSetting(ctx context.Context, key, value string) error {
 }
 
 func (a *Admin) rebuildTMDB(apiKey, language string) {
+	if a.tmdb != nil {
+		a.tmdb.Close()
+	}
 	if strings.TrimSpace(apiKey) == "" {
 		a.tmdb = nil
 		a.scraper = nil
@@ -643,20 +651,34 @@ type AdminMediaItem struct {
 	Title         string `json:"title"`
 	OriginalTitle string `json:"original_title,omitempty"`
 	Year          int    `json:"year,omitempty"`
+	DateAir       string `json:"date_air,omitempty"`
+	Runtime       int64  `json:"runtime,omitempty"`
 	TMDBID        string `json:"tmdb_id,omitempty"`
 	Overview      string `json:"overview,omitempty"`
+	Tagline       string `json:"tagline,omitempty"`
 	PosterURL     string `json:"poster_url,omitempty"`
 	BackdropURL   string `json:"backdrop_url,omitempty"`
 	MediaCount    int64  `json:"media_count"`
 	SeasonCount   int64  `json:"season_count"`
 	EpisodeCount  int64  `json:"episode_count"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
+	MissingPoster bool   `json:"missing_poster"`
+	MissingInfo   bool   `json:"missing_info"`
 }
 
 // AdminMediaListResponse is returned by GET /admin/media.
 type AdminMediaListResponse struct {
 	Items []AdminMediaItem `json:"items"`
 	Total int64            `json:"total"`
+}
+
+type AdminMediaStats struct {
+	Total         int64 `json:"total"`
+	Scraped       int64 `json:"scraped"`
+	Unscraped     int64 `json:"unscraped"`
+	MissingPoster int64 `json:"missing_poster"`
+	MissingInfo   int64 `json:"missing_info"`
+	Complete      int64 `json:"complete"`
 }
 
 type adminFileEntry struct {
@@ -731,16 +753,16 @@ func adminLooksMedia(name string) bool {
 }
 
 // AdminMediaList returns poster-ready media rows for the visual admin dashboard.
-// GET /admin/media?library_id=1&type=movie|tv&search=...&limit=60&offset=0
+// GET /admin/media?library_id=1&type=movie|tv&search=...&missing=poster|info|any&limit=60&offset=0
 func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
 	}
 
 	q := r.URL.Query()
-	limit := parsePositiveInt(q.Get("limit"), 60)
-	if limit > 120 {
-		limit = 120
+	limit := parsePositiveInt(q.Get("limit"), 50)
+	if limit > 100 {
+		limit = 100
 	}
 	offset := parsePositiveInt(q.Get("offset"), 0)
 
@@ -761,6 +783,27 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "(vl.title LIKE ? OR vl.origin_title LIKE ?)")
 		like := "%" + search + "%"
 		args = append(args, like, like)
+	}
+	switch strings.ToLower(strings.TrimSpace(q.Get("missing"))) {
+	case "poster":
+		where = append(where, `NOT EXISTS (
+			SELECT 1 FROM video_image vi
+			WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+			  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+		)`)
+	case "info":
+		where = append(where, "(vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)")
+	case "any":
+		where = append(where, `(
+			vl.tmdb_id IS NULL OR vl.tmdb_id = ''
+			OR vl.description IS NULL OR vl.description = ''
+			OR vl.date_air IS NULL
+			OR NOT EXISTS (
+				SELECT 1 FROM video_image vi
+				WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+				  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+			)
+		)`)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
@@ -784,7 +827,9 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 			COALESCE(vl.origin_title, ''),
 			COALESCE(vl.tmdb_id, ''),
 			COALESCE(vl.description, ''),
+			COALESCE(vl.tagline, ''),
 			vl.date_air,
+			COALESCE(vl.runtime, 0),
 			vl.updated_at,
 			COUNT(DISTINCT vm.id) AS media_count,
 			COUNT(DISTINCT vs.id) AS season_count,
@@ -824,39 +869,11 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 
 	items := []AdminMediaItem{}
 	for rows.Next() {
-		var (
-			item         AdminMediaItem
-			originTitle  string
-			tmdbID       string
-			overview     string
-			dateAir      sql.NullTime
-			updatedAt    sql.NullTime
-			posterType   string
-			posterPath   string
-			backdropType string
-			backdropPath string
-		)
-		if err := rows.Scan(
-			&item.ID, &item.LibraryID, &item.Type, &item.Title,
-			&originTitle, &tmdbID, &overview, &dateAir, &updatedAt,
-			&item.MediaCount, &item.SeasonCount, &item.EpisodeCount,
-			&posterType, &posterPath, &backdropType, &backdropPath,
-		); err != nil {
+		item, err := scanAdminMediaItem(rows)
+		if err != nil {
 			a.log.Warn("admin media row skipped", "err", err)
 			continue
 		}
-		item.ItemID = emby.ItemID(emby.ItemIDTypeVideoList, item.ID)
-		item.OriginalTitle = originTitle
-		item.TMDBID = tmdbID
-		item.Overview = overview
-		if dateAir.Valid {
-			item.Year = dateAir.Time.Year()
-		}
-		if updatedAt.Valid {
-			item.UpdatedAt = updatedAt.Time.UTC().Format("2006-01-02T15:04:05Z")
-		}
-		item.PosterURL = adminImageURL(posterType, posterPath, item.ItemID, db.ImageTypePrimary)
-		item.BackdropURL = adminImageURL(backdropType, backdropPath, item.ItemID, db.ImageTypeBackdrop)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -866,6 +883,55 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, AdminMediaListResponse{Items: items, Total: total})
+}
+
+// AdminMediaStats returns scrape coverage for the current media filter.
+// GET /admin/media/stats?library_id=1&type=movie|tv
+func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	where := []string{"vl.deleted_at IS NULL"}
+	args := []any{}
+	if libID := parsePositiveInt64(q.Get("library_id"), 0); libID > 0 {
+		where = append(where, "vl.video_library_id = ?")
+		args = append(args, libID)
+	}
+	if typ := strings.TrimSpace(q.Get("type")); typ == db.VideoTypeMovie || typ == db.VideoTypeTV {
+		where = append(where, "vl.video_type = ?")
+		args = append(args, typ)
+	}
+	whereSQL := strings.Join(where, " AND ")
+	row := a.db.QueryRowContext(r.Context(), `
+		SELECT
+			COUNT(*) AS total,
+			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> '') AS scraped,
+			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') = '') AS unscraped,
+			COUNT(*) FILTER (WHERE NOT EXISTS (
+				SELECT 1 FROM video_image vi
+				WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+				  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+			)) AS missing_poster,
+			COUNT(*) FILTER (WHERE vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL) AS missing_info,
+			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> ''
+				AND COALESCE(vl.description, '') <> ''
+				AND vl.date_air IS NOT NULL
+				AND EXISTS (
+					SELECT 1 FROM video_image vi
+					WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+					  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+				)
+			) AS complete
+		FROM video_list vl
+		WHERE `+whereSQL, args...)
+	var out AdminMediaStats
+	if err := row.Scan(&out.Total, &out.Scraped, &out.Unscraped, &out.MissingPoster, &out.MissingInfo, &out.Complete); err != nil {
+		a.log.Error("admin media stats failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
 }
 
 type adminMediaSeason struct {
@@ -891,6 +957,119 @@ type adminMediaSource struct {
 	UUID    string `json:"uuid"`
 	Name    string `json:"name"`
 	PathURL string `json:"path_url,omitempty"`
+}
+
+type adminMediaUpdateRequest struct {
+	Title         *string `json:"title"`
+	OriginalTitle *string `json:"original_title"`
+	TMDBID        *string `json:"tmdb_id"`
+	Overview      *string `json:"overview"`
+	Tagline       *string `json:"tagline"`
+	DateAir       *string `json:"date_air"`
+	Runtime       *int    `json:"runtime"`
+	PosterURL     *string `json:"poster_url"`
+	BackdropURL   *string `json:"backdrop_url"`
+}
+
+// AdminMediaUpdate updates editable metadata for one video_list.
+// PATCH /admin/media/{id}
+func (a *Admin) AdminMediaUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	var body adminMediaUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	var exists int64
+	if err := a.db.QueryRowContext(r.Context(),
+		"SELECT COUNT(*) FROM video_list WHERE id = ? AND deleted_at IS NULL", id,
+	).Scan(&exists); err != nil || exists == 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+
+	updates := []string{}
+	args := []any{}
+	if body.Title != nil {
+		title := strings.TrimSpace(*body.Title)
+		if title == "" {
+			WriteText(w, http.StatusBadRequest, "title required")
+			return
+		}
+		updates = append(updates, "title = ?")
+		args = append(args, title)
+	}
+	if body.OriginalTitle != nil {
+		updates = append(updates, "origin_title = ?")
+		args = append(args, nullableString(*body.OriginalTitle))
+	}
+	if body.TMDBID != nil {
+		updates = append(updates, "tmdb_id = ?")
+		args = append(args, nullableString(*body.TMDBID))
+	}
+	if body.Overview != nil {
+		updates = append(updates, "description = ?")
+		args = append(args, nullableString(*body.Overview))
+	}
+	if body.Tagline != nil {
+		updates = append(updates, "tagline = ?")
+		args = append(args, nullableString(*body.Tagline))
+	}
+	if body.DateAir != nil {
+		air, err := parseOptionalDate(*body.DateAir)
+		if err != nil {
+			WriteText(w, http.StatusBadRequest, "date_air must be YYYY-MM-DD")
+			return
+		}
+		updates = append(updates, "date_air = ?")
+		args = append(args, air)
+	}
+	if body.Runtime != nil {
+		updates = append(updates, "runtime = ?")
+		args = append(args, nullableAdminInt(*body.Runtime))
+	}
+	if len(updates) > 0 {
+		updates = append(updates, "updated_at = NOW()")
+		stmt := "UPDATE video_list SET " + strings.Join(updates, ", ") + " WHERE id = ? AND deleted_at IS NULL"
+		args = append(args, id)
+		res, err := a.db.ExecContext(r.Context(), stmt, args...)
+		if err != nil {
+			a.log.Error("admin media update failed", "err", err)
+			WriteText(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			WriteStatus(w, http.StatusNotFound)
+			return
+		}
+	}
+	if body.PosterURL != nil {
+		if err := a.replaceAdminImage(r.Context(), id, db.ImageTypePrimary, strings.TrimSpace(*body.PosterURL)); err != nil {
+			WriteText(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if body.BackdropURL != nil {
+		if err := a.replaceAdminImage(r.Context(), id, db.ImageTypeBackdrop, strings.TrimSpace(*body.BackdropURL)); err != nil {
+			WriteText(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	item, err := a.adminMediaOne(r.Context(), id)
+	if err != nil {
+		WriteText(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, item)
 }
 
 // AdminMediaChildren returns expandable children/details for one video_list.
@@ -1039,6 +1218,180 @@ func adminImageURL(pathType, pathURL, itemID, imageType string) string {
 	}
 }
 
+func (a *Admin) adminMediaOne(ctx context.Context, id int64) (*AdminMediaItem, error) {
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT
+			vl.id,
+			vl.video_library_id,
+			vl.video_type,
+			vl.title,
+			COALESCE(vl.origin_title, ''),
+			COALESCE(vl.tmdb_id, ''),
+			COALESCE(vl.description, ''),
+			COALESCE(vl.tagline, ''),
+			vl.date_air,
+			COALESCE(vl.runtime, 0),
+			vl.updated_at,
+			COUNT(DISTINCT vm.id) AS media_count,
+			COUNT(DISTINCT vs.id) AS season_count,
+			COUNT(DISTINCT ve.id) AS episode_count,
+			COALESCE(MAX(CASE WHEN vip.type = 'Primary' THEN vip.path_type END), '') AS poster_type,
+			COALESCE(MAX(CASE WHEN vip.type = 'Primary' THEN vip.path_url END), '') AS poster_url,
+			COALESCE(MAX(CASE WHEN vib.type = 'Backdrop' THEN vib.path_type END), '') AS backdrop_type,
+			COALESCE(MAX(CASE WHEN vib.type = 'Backdrop' THEN vib.path_url END), '') AS backdrop_url
+		FROM video_list vl
+		LEFT JOIN video_media vm
+			ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
+		LEFT JOIN video_season vs
+			ON vs.video_list_id = vl.id AND vs.deleted_at IS NULL
+		LEFT JOIN video_episode ve
+			ON ve.video_list_id = vl.id AND ve.deleted_at IS NULL
+		LEFT JOIN video_image vip
+			ON vip.relation_type = ? AND vip.relation_id = vl.id
+			AND vip.type = ? AND vip.deleted_at IS NULL
+		LEFT JOIN video_image vib
+			ON vib.relation_type = ? AND vib.relation_id = vl.id
+			AND vib.type = ? AND vib.deleted_at IS NULL
+		WHERE vl.id = ? AND vl.deleted_at IS NULL
+		GROUP BY vl.id`,
+		emby.ItemIDTypeVideoList, db.ImageTypePrimary,
+		emby.ItemIDTypeVideoList, db.ImageTypeBackdrop,
+		id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
+	item, err := scanAdminMediaItem(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &item, rows.Err()
+}
+
+func scanAdminMediaItem(rows interface {
+	Scan(dest ...any) error
+}) (AdminMediaItem, error) {
+	var (
+		item         AdminMediaItem
+		originTitle  string
+		tmdbID       string
+		overview     string
+		tagline      string
+		dateAir      sql.NullTime
+		runtime      int64
+		updatedAt    sql.NullTime
+		posterType   string
+		posterPath   string
+		backdropType string
+		backdropPath string
+	)
+	if err := rows.Scan(
+		&item.ID, &item.LibraryID, &item.Type, &item.Title,
+		&originTitle, &tmdbID, &overview, &tagline, &dateAir, &runtime, &updatedAt,
+		&item.MediaCount, &item.SeasonCount, &item.EpisodeCount,
+		&posterType, &posterPath, &backdropType, &backdropPath,
+	); err != nil {
+		return item, err
+	}
+	item.ItemID = emby.ItemID(emby.ItemIDTypeVideoList, item.ID)
+	item.OriginalTitle = originTitle
+	item.TMDBID = tmdbID
+	item.Overview = overview
+	item.Tagline = tagline
+	item.Runtime = runtime
+	if dateAir.Valid {
+		item.Year = dateAir.Time.Year()
+		item.DateAir = dateAir.Time.Format("2006-01-02")
+	}
+	if updatedAt.Valid {
+		item.UpdatedAt = updatedAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	item.PosterURL = adminImageURL(posterType, posterPath, item.ItemID, db.ImageTypePrimary)
+	item.BackdropURL = adminImageURL(backdropType, backdropPath, item.ItemID, db.ImageTypeBackdrop)
+	item.MissingPoster = item.PosterURL == ""
+	item.MissingInfo = item.TMDBID == "" || item.Overview == "" || item.DateAir == ""
+	return item, nil
+}
+
+func (a *Admin) replaceAdminImage(ctx context.Context, listID int64, imageType, rawURL string) error {
+	if rawURL == "" {
+		_, err := a.db.ExecContext(ctx, `
+			UPDATE video_image SET deleted_at = NOW(), updated_at = NOW()
+			WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
+		`, emby.ItemIDTypeVideoList, listID, imageType)
+		return err
+	}
+	pathType, pathURL := adminImagePath(rawURL)
+	var existing int64
+	_ = a.db.QueryRowContext(ctx, `
+		SELECT id FROM video_image
+		WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
+		LIMIT 1
+	`, emby.ItemIDTypeVideoList, listID, imageType).Scan(&existing)
+	if existing > 0 {
+		_, err := a.db.ExecContext(ctx, `
+			UPDATE video_image SET path_type = ?, path_url = ?, updated_at = NOW()
+			WHERE id = ?
+		`, pathType, pathURL, existing)
+		return err
+	}
+	_, err := a.db.ExecContext(ctx, `
+		INSERT INTO video_image (type, relation_type, relation_id, path_type, path_url)
+		VALUES (?, ?, ?, ?, ?)
+	`, imageType, emby.ItemIDTypeVideoList, listID, pathType, pathURL)
+	return err
+}
+
+func adminImagePath(rawURL string) (pathType, pathURL string) {
+	rawURL = strings.TrimSpace(rawURL)
+	if strings.HasPrefix(rawURL, "https://image.tmdb.org/t/p/") {
+		parts := strings.SplitN(strings.TrimPrefix(rawURL, "https://image.tmdb.org/t/p/"), "/", 2)
+		if len(parts) == 2 && strings.HasPrefix(parts[1], "/") {
+			return db.ImagePathTypeTMDB, parts[1]
+		}
+		if len(parts) == 2 {
+			return db.ImagePathTypeTMDB, "/" + parts[1]
+		}
+	}
+	switch {
+	case strings.HasPrefix(rawURL, "/") && !strings.Contains(rawURL, "://"):
+		if strings.Count(rawURL, "/") == 1 {
+			return db.ImagePathTypeTMDB, rawURL
+		}
+		return db.PathTypeLocal, rawURL
+	case strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://"):
+		if strings.Contains(rawURL, "douban") {
+			return db.ImagePathTypeDouban, rawURL
+		}
+		return db.ImagePathTypeURL, rawURL
+	default:
+		return db.PathTypeLocal, rawURL
+	}
+}
+
+func parseOptionalDate(raw string) (sql.NullTime, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return sql.NullTime{}, nil
+	}
+	t, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return sql.NullTime{}, err
+	}
+	return sql.NullTime{Valid: true, Time: t}, nil
+}
+
+func nullableAdminInt(v int) sql.NullInt64 {
+	if v <= 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Valid: true, Int64: int64(v)}
+}
+
 func parsePositiveInt(raw string, def int) int {
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || n < 0 {
@@ -1098,6 +1451,19 @@ type scanJob struct {
 	Progress   importer.Progress `json:"progress"`
 	Result     any               `json:"result,omitempty"`
 	Error      string            `json:"error,omitempty"`
+}
+
+type embyRefreshRequest struct {
+	Recursive           bool     `json:"Recursive"`
+	ImageRefreshMode    string   `json:"ImageRefreshMode"`
+	MetadataRefreshMode string   `json:"MetadataRefreshMode"`
+	ReplaceAllImages    bool     `json:"ReplaceAllImages"`
+	ReplaceAllMetadata  bool     `json:"ReplaceAllMetadata"`
+	Paths               []string `json:"Paths"`
+	Updates             []struct {
+		Path       string `json:"Path"`
+		UpdateType string `json:"UpdateType"`
+	} `json:"Updates"`
 }
 
 // LibraryScan runs a synchronous import from a local directory.
@@ -1258,15 +1624,7 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 		wantScrape := mode == "on" || mode == "force" ||
 			(mode == "" && a.cfg.TMDBAutoScrape)
 		if wantScrape && a.scraper != nil && a.scraper.Enabled() {
-			scrapeResults := make([]*tmdb.ScrapeResult, 0, len(report.TouchedVideoListIDs))
-			for _, id := range report.TouchedVideoListIDs {
-				res, err := a.scraper.ScrapeVideoList(ctx, id, mode == "force")
-				if err != nil {
-					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
-					continue
-				}
-				scrapeResults = append(scrapeResults, res)
-			}
+			scrapeResults := a.scrapeVideoLists(ctx, report.TouchedVideoListIDs, mode == "force")
 			return map[string]any{
 				"import": report,
 				"tmdb":   scrapeResults,
@@ -1275,6 +1633,54 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 	}
 
 	return report, nil
+}
+
+func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool) []*tmdb.ScrapeResult {
+	if len(ids) == 0 {
+		return nil
+	}
+	const workers = 8
+	jobs := make(chan int64)
+	results := make(chan *tmdb.ScrapeResult)
+	var wg sync.WaitGroup
+	workerCount := workers
+	if len(ids) < workerCount {
+		workerCount = len(ids)
+	}
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				res, err := a.scraper.ScrapeVideoList(ctx, id, force)
+				if err != nil {
+					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
+					continue
+				}
+				results <- res
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				return
+			}
+			jobs <- id
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	out := make([]*tmdb.ScrapeResult, 0, len(ids))
+	for res := range results {
+		if res != nil {
+			out = append(out, res)
+		}
+	}
+	return out
 }
 
 func (a *Admin) updateScanJob(id string, fn func(*scanJob)) {
@@ -1299,6 +1705,204 @@ func randomScanID() string {
 		return strconv.FormatInt(time.Now().UnixNano(), 36)
 	}
 	return hex.EncodeToString(b[:])
+}
+
+// EmbyLibraryRefresh accepts Emby/Jellyfin-style refresh requests used by
+// automation tools. It maps them to Emotion's existing async scan jobs.
+func (a *Admin) EmbyLibraryRefresh(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body embyRefreshRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+
+	started := []any{}
+	for _, req := range a.refreshRequestsFromBody(r, body) {
+		job, err := a.startScanJob(req)
+		if err != nil {
+			a.log.Warn("emby refresh start failed", "err", err)
+			continue
+		}
+		started = append(started, job)
+	}
+	if len(started) == 0 {
+		WriteStatus(w, http.StatusNoContent)
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, map[string]any{"Items": started, "TotalRecordCount": len(started)})
+}
+
+// EmbyItemRefresh refreshes one library or item by Emby item id.
+func (a *Admin) EmbyItemRefresh(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	itemID := chi.URLParam(r, "itemId")
+	if itemID == "" {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	libraryID, root, role, ok := libraryRootForItem(r.Context(), a.db, itemID)
+	if !ok || libraryID <= 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	force := strings.EqualFold(r.URL.Query().Get("ReplaceAllMetadata"), "true")
+	if kind, numericID, parsed := emby.ParseItemID(itemID); parsed && kind == emby.ItemIDTypeVideoList {
+		if a.scraper != nil && a.scraper.Enabled() {
+			res, err := a.scraper.ScrapeVideoList(r.Context(), numericID, force)
+			if err == nil {
+				WriteJSON(w, http.StatusOK, res)
+				return
+			}
+			a.log.Warn("emby item tmdb refresh failed", "item_id", itemID, "err", err)
+		}
+	}
+	if strings.TrimSpace(root) == "" {
+		WriteStatus(w, http.StatusNoContent)
+		return
+	}
+	job, err := a.startScanJob(scanRequest{
+		LibraryID:   libraryID,
+		Root:        root,
+		DefaultType: role,
+		Scrape:      "on",
+	})
+	if err != nil {
+		WriteText(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, job)
+}
+
+func (a *Admin) refreshRequestsFromBody(r *http.Request, body embyRefreshRequest) []scanRequest {
+	var paths []string
+	paths = append(paths, body.Paths...)
+	for _, u := range body.Updates {
+		if strings.TrimSpace(u.Path) != "" {
+			paths = append(paths, u.Path)
+		}
+	}
+	for _, key := range []string{"path", "Path"} {
+		if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
+			paths = append(paths, v)
+		}
+	}
+	for _, key := range []string{"ItemId", "itemId", "ParentId"} {
+		if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
+			if libID, root, role, ok := libraryRootForItem(r.Context(), a.db, v); ok && strings.TrimSpace(root) != "" {
+				return []scanRequest{{LibraryID: libID, Root: root, DefaultType: role, Scrape: "on"}}
+			}
+		}
+	}
+
+	type libRow struct {
+		id   int64
+		root string
+		role string
+	}
+	libraries := []libRow{}
+	rows, err := a.db.QueryContext(r.Context(), `
+		SELECT id, COALESCE(root_path, ''), COALESCE(role, '')
+		FROM library
+		WHERE deleted_at IS NULL AND COALESCE(root_path, '') <> ''
+		ORDER BY id ASC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var l libRow
+			if err := rows.Scan(&l.id, &l.root, &l.role); err == nil {
+				libraries = append(libraries, l)
+			}
+		}
+	}
+
+	out := []scanRequest{}
+	if len(paths) == 0 {
+		for _, l := range libraries {
+			out = append(out, scanRequest{LibraryID: l.id, Root: l.root, DefaultType: l.role, Scrape: "on"})
+		}
+		return out
+	}
+	seen := map[string]bool{}
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		for _, l := range libraries {
+			if pathWithinRoot(p, l.root) {
+				key := strconv.FormatInt(l.id, 10) + "|" + p
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, scanRequest{LibraryID: l.id, Root: p, DefaultType: l.role, Scrape: "on"})
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, l := range libraries {
+			out = append(out, scanRequest{LibraryID: l.id, Root: l.root, DefaultType: l.role, Scrape: "on"})
+		}
+	}
+	return out
+}
+
+func (a *Admin) startScanJob(body scanRequest) (*scanJob, error) {
+	if err := a.hydrateScanRequest(context.Background(), &body); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(body.Root); err != nil {
+		return nil, err
+	}
+	id := randomScanID()
+	job := &scanJob{
+		ID:        id,
+		Status:    "running",
+		StartedAt: time.Now(),
+		Progress: importer.Progress{
+			Stage:   "queued",
+			Current: body.Root,
+			Report:  importer.Report{StartedAt: time.Now()},
+		},
+	}
+	a.scanMu.Lock()
+	a.scanJobs[id] = job
+	a.scanMu.Unlock()
+	go func() {
+		result, err := a.runScanJob(context.Background(), body, func(p importer.Progress) {
+			a.updateScanJob(id, func(j *scanJob) { j.Progress = p })
+		})
+		a.updateScanJob(id, func(j *scanJob) {
+			j.FinishedAt = time.Now()
+			if err != nil {
+				j.Status = "failed"
+				j.Error = err.Error()
+				j.Progress.Stage = "failed"
+				return
+			}
+			j.Status = "done"
+			j.Result = result
+			j.Progress.Stage = "done"
+		})
+	}()
+	return job, nil
+}
+
+func pathWithinRoot(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	if strings.EqualFold(path, root) {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != "." && rel != "" && !strings.HasPrefix(rel, "..")
 }
 
 type watchRequest struct {
@@ -1671,8 +2275,21 @@ func (a *Admin) TMDBRefreshOne(w http.ResponseWriter, r *http.Request) {
 
 // TMDBRefreshAllRequest is the POST body for the bulk refresh endpoint.
 type tmdbRefreshAllRequest struct {
-	Max   int  `json:"max"`
-	Force bool `json:"force"`
+	Max       int    `json:"max"`
+	Force     bool   `json:"force"`
+	LibraryID int64  `json:"library_id"`
+	VideoType string `json:"video_type"`
+	Missing   string `json:"missing"`
+}
+
+type tmdbRefreshJob struct {
+	ID         string            `json:"id"`
+	Status     string            `json:"status"`
+	StartedAt  time.Time         `json:"started_at"`
+	FinishedAt time.Time         `json:"finished_at,omitempty"`
+	Progress   tmdb.BatchResult  `json:"progress"`
+	Result     *tmdb.BatchResult `json:"result,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }
 
 // TMDBRefreshAll scans all items missing metadata and refreshes each.
@@ -1690,11 +2307,110 @@ func (a *Admin) TMDBRefreshAll(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	defer r.Body.Close()
 
-	rep, err := a.scraper.ScrapeAllMissing(r.Context(), body.Max, body.Force)
+	rep, err := a.scraper.ScrapeMissing(r.Context(), tmdb.ScrapeMissingOptions{
+		MaxItems:  body.Max,
+		Force:     body.Force,
+		LibraryID: body.LibraryID,
+		VideoType: body.VideoType,
+		Missing:   body.Missing,
+	})
 	if err != nil {
 		a.log.Error("tmdb refresh-all failed", "err", err)
 		WriteText(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	WriteJSON(w, http.StatusOK, rep)
+}
+
+// TMDBRefreshAllStart starts an asynchronous bulk TMDB refresh job.
+// POST /admin/tmdb/refresh-all/start
+func (a *Admin) TMDBRefreshAllStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if a.scraper == nil || !a.scraper.Enabled() {
+		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		return
+	}
+	var body tmdbRefreshAllRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+
+	id := randomScanID()
+	job := &tmdbRefreshJob{
+		ID:        id,
+		Status:    "running",
+		StartedAt: time.Now(),
+	}
+	a.tmdbMu.Lock()
+	a.tmdbJobs[id] = job
+	a.tmdbMu.Unlock()
+
+	go func() {
+		rep, err := a.scraper.ScrapeMissing(context.Background(), tmdb.ScrapeMissingOptions{
+			MaxItems:  body.Max,
+			Force:     body.Force,
+			LibraryID: body.LibraryID,
+			VideoType: body.VideoType,
+			Missing:   body.Missing,
+			Progress: func(p tmdb.BatchResult) {
+				p.Duration = time.Since(job.StartedAt).Milliseconds()
+				a.updateTMDBJob(id, func(j *tmdbRefreshJob) {
+					j.Progress = p
+				})
+			},
+		})
+		a.updateTMDBJob(id, func(j *tmdbRefreshJob) {
+			j.FinishedAt = time.Now()
+			if err != nil {
+				j.Status = "failed"
+				j.Error = err.Error()
+				return
+			}
+			j.Status = "done"
+			j.Result = rep
+			if rep != nil {
+				j.Progress = *rep
+			}
+		})
+	}()
+
+	WriteJSON(w, http.StatusAccepted, job)
+}
+
+// TMDBRefreshAllStatus returns the latest status for an async TMDB job.
+// GET /admin/tmdb/refresh-all/{id}
+func (a *Admin) TMDBRefreshAllStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	a.tmdbMu.Lock()
+	job := a.cloneTMDBJob(a.tmdbJobs[id])
+	a.tmdbMu.Unlock()
+	if job == nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	WriteJSON(w, http.StatusOK, job)
+}
+
+func (a *Admin) updateTMDBJob(id string, fn func(*tmdbRefreshJob)) {
+	a.tmdbMu.Lock()
+	defer a.tmdbMu.Unlock()
+	if job := a.tmdbJobs[id]; job != nil {
+		fn(job)
+	}
+}
+
+func (a *Admin) cloneTMDBJob(job *tmdbRefreshJob) *tmdbRefreshJob {
+	if job == nil {
+		return nil
+	}
+	out := *job
+	if job.Result != nil {
+		cp := *job.Result
+		out.Result = &cp
+	}
+	return &out
 }

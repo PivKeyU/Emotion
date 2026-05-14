@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /src
@@ -8,16 +7,12 @@ WORKDIR /src
 # found"). Using `go.sum*` keeps the step working whether the file exists or
 # not, and still gives us a cached `go mod download` layer when it does.
 COPY go.mod go.sum* ./
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go mod download
+RUN go mod download
 
 # Build the binary. Reuse the same module + build caches so incremental
 # rebuilds (only source changed) are fast.
 COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/emotion ./cmd/emotion
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/emotion ./cmd/emotion
 
 FROM alpine:3.20
 

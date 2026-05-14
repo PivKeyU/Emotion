@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivKeyU/Emotion/internal/db"
@@ -57,6 +58,7 @@ type ScrapeResult struct {
 
 // BatchResult aggregates ScrapeResult for a bulk run.
 type BatchResult struct {
+	Total     int            `json:"total"`
 	Processed int            `json:"processed"`
 	Matched   int            `json:"matched"`
 	Skipped   int            `json:"skipped"`
@@ -64,6 +66,21 @@ type BatchResult struct {
 	Duration  int64          `json:"duration_ms"`
 	Errors    []string       `json:"errors,omitempty"`
 	Items     []ScrapeResult `json:"items,omitempty"`
+}
+
+type ScrapeMissingOptions struct {
+	MaxItems  int
+	Force     bool
+	LibraryID int64
+	VideoType string
+	Missing   string
+	Progress  func(BatchResult)
+}
+
+type batchItem struct {
+	id        int64
+	videoType string
+	title     string
 }
 
 // ScrapeVideoList refreshes the metadata for a single video_list row.
@@ -516,41 +533,55 @@ func yearOfTime(nt sql.NullTime) int {
 // missing primary image, and scrapes each. Controlled by a hard cap to
 // protect against exhausting the TMDB quota on large libraries.
 func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool) (*BatchResult, error) {
+	return s.ScrapeMissing(ctx, ScrapeMissingOptions{MaxItems: maxItems, Force: force})
+}
+
+// ScrapeMissing iterates video_list rows that are missing metadata or artwork.
+// Missing accepts: "", "any", "poster", "info", "unscraped".
+func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) (*BatchResult, error) {
 	if !s.Enabled() {
 		return nil, errors.New("tmdb scraper disabled")
 	}
-	if maxItems <= 0 {
-		maxItems = 200
+	if opts.MaxItems <= 0 {
+		opts.MaxItems = 200
 	}
 
 	start := time.Now()
 	rep := &BatchResult{}
 
-	// Items needing scrape: description NULL/"" OR missing Primary image.
+	where := []string{"vl.deleted_at IS NULL"}
+	args := []any{}
+	if opts.LibraryID > 0 {
+		where = append(where, "vl.video_library_id = ?")
+		args = append(args, opts.LibraryID)
+	}
+	if opts.VideoType == db.VideoTypeMovie || opts.VideoType == db.VideoTypeTV {
+		where = append(where, "vl.video_type = ?")
+		args = append(args, opts.VideoType)
+	}
+	switch strings.ToLower(strings.TrimSpace(opts.Missing)) {
+	case "poster":
+		where = append(where, missingPosterSQL())
+	case "info":
+		where = append(where, missingInfoSQL())
+	case "unscraped":
+		where = append(where, "(vl.tmdb_id IS NULL OR vl.tmdb_id = '')")
+	default:
+		where = append(where, "("+missingInfoSQL()+" OR "+missingPosterSQL()+")")
+	}
+	args = append(args, opts.MaxItems)
+
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT vl.id, vl.video_type, vl.title FROM video_list vl
-		WHERE vl.deleted_at IS NULL
-		  AND (
-			vl.description IS NULL OR vl.description = ''
-			OR NOT EXISTS (
-			  SELECT 1 FROM video_image vi
-			  WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
-			    AND vi.type = 'Primary' AND vi.deleted_at IS NULL
-			)
-		  )
+		WHERE `+strings.Join(where, " AND ")+`
 		ORDER BY vl.updated_at DESC
 		LIMIT ?
-	`, maxItems)
+	`, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	type batchItem struct {
-		id        int64
-		videoType string
-		title     string
-	}
 	var ids []batchItem
 	for rows.Next() {
 		var item batchItem
@@ -559,32 +590,101 @@ func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool
 		}
 	}
 
-	for _, item := range ids {
-		if err := ctx.Err(); err != nil {
-			rep.Errors = append(rep.Errors, err.Error())
-			break
+	s.scrapeBatch(ctx, ids, opts.Force, rep, opts.Progress)
+	rep.Duration = time.Since(start).Milliseconds()
+	return rep, nil
+}
+
+func missingInfoSQL() string {
+	return "(vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+}
+
+func missingPosterSQL() string {
+	return `NOT EXISTS (
+		SELECT 1 FROM video_image vi
+		WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+		  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+	)`
+}
+
+func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, rep *BatchResult, progress func(BatchResult)) {
+	const workers = 8
+	jobs := make(chan batchItem)
+	results := make(chan ScrapeResult)
+	rep.Total = len(ids)
+	if progress != nil {
+		progress(*rep)
+	}
+
+	var wg sync.WaitGroup
+	workerCount := workers
+	if len(ids) < workerCount {
+		workerCount = len(ids)
+	}
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				res, err := s.ScrapeVideoList(ctx, item.id, force)
+				if err != nil {
+					results <- ScrapeResult{
+						VideoListID: item.id,
+						VideoType:   item.videoType,
+						Title:       item.title,
+						Failed:      true,
+						Reason:      err.Error(),
+					}
+					continue
+				}
+				if res == nil {
+					results <- ScrapeResult{
+						VideoListID: item.id,
+						VideoType:   item.videoType,
+						Title:       item.title,
+						Skipped:     true,
+						Reason:      "empty result",
+					}
+					continue
+				}
+				results <- *res
+			}
+		}()
+	}
+
+	go func() {
+		defer close(jobs)
+		for _, item := range ids {
+			if ctx.Err() != nil {
+				return
+			}
+			jobs <- item
 		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for res := range results {
 		rep.Processed++
-		res, err := s.ScrapeVideoList(ctx, item.id, force)
-		if err != nil {
+		if res.Failed {
 			rep.Failed++
-			rep.Errors = append(rep.Errors, fmt.Sprintf("id=%d %s: %v", item.id, item.title, err))
-			rep.Items = append(rep.Items, ScrapeResult{
-				VideoListID: item.id,
-				VideoType:   item.videoType,
-				Title:       item.title,
-				Failed:      true,
-				Reason:      err.Error(),
-			})
-			continue
-		}
-		if res.Skipped {
+			rep.Errors = append(rep.Errors, fmt.Sprintf("id=%d %s: %s", res.VideoListID, res.Title, res.Reason))
+		} else if res.Skipped {
 			rep.Skipped++
 		} else {
 			rep.Matched++
 		}
-		rep.Items = append(rep.Items, *res)
+		rep.Items = append(rep.Items, res)
+		if progress != nil {
+			progress(*rep)
+		}
 	}
-	rep.Duration = time.Since(start).Milliseconds()
-	return rep, nil
+	if err := ctx.Err(); err != nil {
+		rep.Errors = append(rep.Errors, err.Error())
+		if progress != nil {
+			progress(*rep)
+		}
+	}
 }

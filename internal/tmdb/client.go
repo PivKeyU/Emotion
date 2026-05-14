@@ -36,6 +36,7 @@ type Client struct {
 	baseURL     string
 	language    string
 	rateLimiter <-chan time.Time
+	rateTicker  *time.Ticker
 }
 
 // Option configures a Client.
@@ -56,6 +57,28 @@ func WithLanguage(lang string) Option {
 	return func(c *Client) { c.language = lang }
 }
 
+// WithRateLimit sets the client-wide request pacing. Values <= 0 disable the
+// local limiter and leave throttling to TMDB/server responses.
+func WithRateLimit(requestsPerSecond int) Option {
+	return func(c *Client) {
+		if c.rateTicker != nil {
+			c.rateTicker.Stop()
+			c.rateTicker = nil
+		}
+		if requestsPerSecond <= 0 {
+			c.rateLimiter = nil
+			return
+		}
+		interval := time.Second / time.Duration(requestsPerSecond)
+		if interval <= 0 {
+			interval = time.Millisecond
+		}
+		t := time.NewTicker(interval)
+		c.rateTicker = t
+		c.rateLimiter = t.C
+	}
+}
+
 // NewClient constructs a TMDB client.
 //
 // apiKey may be either:
@@ -74,8 +97,10 @@ func NewClient(apiKey string, opts ...Option) *Client {
 	if len(c.apiKey) > 40 && strings.HasPrefix(c.apiKey, "eyJ") {
 		c.useBearer = true
 	}
-	// Default rate limit: 4 req/sec. TMDB allows 50/sec burst.
-	t := time.NewTicker(250 * time.Millisecond)
+	// Default rate limit: keep comfortably below TMDB's documented 50/sec
+	// while avoiding slow one-by-one library scrapes.
+	t := time.NewTicker(50 * time.Millisecond)
+	c.rateTicker = t
 	c.rateLimiter = t.C
 
 	for _, o := range opts {
@@ -86,6 +111,14 @@ func NewClient(apiKey string, opts ...Option) *Client {
 
 // Enabled reports whether an API key was configured.
 func (c *Client) Enabled() bool { return c != nil && c.apiKey != "" }
+
+// Close releases local resources owned by the client.
+func (c *Client) Close() {
+	if c != nil && c.rateTicker != nil {
+		c.rateTicker.Stop()
+		c.rateTicker = nil
+	}
+}
 
 // --- response types (only fields we use) ---
 

@@ -106,13 +106,18 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	// Library
 	r.Get(prefix+"/Library/MediaFolders", lib.MediaFolders)
 	r.Get(prefix+"/Library/VirtualFolders", lib.VirtualFolders)
+	r.Get(prefix+"/Library/SelectableMediaFolders", lib.SelectableMediaFolders)
+	r.Post(prefix+"/Library/Refresh", admin.EmbyLibraryRefresh)
+	r.Post(prefix+"/Library/Media/Updated", admin.EmbyLibraryRefresh)
 
 	// Items (top-level)
 	r.Get(prefix+"/Items", items.Items)
 	r.Get(prefix+"/Items/Counts", items.Counts)
+	r.Get(prefix+"/Items/{itemId}", items.ItemInfo)
 	r.Get(prefix+"/Items/{itemId}/Similar", items.Similar)
 	r.Get(prefix+"/Items/{itemId}/PlaybackInfo", items.PlaybackInfo)
 	r.Post(prefix+"/Items/{itemId}/PlaybackInfo", items.PlaybackInfo)
+	r.Post(prefix+"/Items/{itemId}/Refresh", admin.EmbyItemRefresh)
 
 	// Shows
 	r.Get(prefix+"/Shows/NextUp", shows.NextUp)
@@ -152,6 +157,8 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Delete("/admin/libraries/{id}", admin.LibraryDelete)
 		r.Get("/admin/files", admin.FilesBrowse)
 		r.Get("/admin/media", admin.AdminMediaList)
+		r.Get("/admin/media/stats", admin.AdminMediaStats)
+		r.Patch("/admin/media/{id}", admin.AdminMediaUpdate)
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Get("/admin/logs", admin.Logs)
 		r.Get("/admin/api-keys", admin.APIKeysList)
@@ -169,5 +176,7 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Delete("/admin/library/watch/{id}", admin.LibraryWatchStop)
 		r.Post("/admin/items/{id}/tmdb/refresh", admin.TMDBRefreshOne)
 		r.Post("/admin/tmdb/refresh-all", admin.TMDBRefreshAll)
+		r.Post("/admin/tmdb/refresh-all/start", admin.TMDBRefreshAllStart)
+		r.Get("/admin/tmdb/refresh-all/{id}", admin.TMDBRefreshAllStatus)
 	}
 }

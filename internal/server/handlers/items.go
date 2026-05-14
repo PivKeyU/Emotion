@@ -47,7 +47,17 @@ func (i *Items) Items(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	userID := q.Get("userid")
 	if userID == "" {
-		userID = strconv.FormatInt(ctxpkg.UserID(r.Context()), 10)
+		if ctxUserID := ctxpkg.UserID(r.Context()); ctxUserID > 0 {
+			userID = strconv.FormatInt(ctxUserID, 10)
+		}
+	}
+	if userID == "" && ctxpkg.IsAdmin(r.Context()) {
+		i.AdminItems(w, r)
+		return
+	}
+	if userID == "" {
+		WriteStatus(w, http.StatusUnauthorized)
+		return
 	}
 
 	// Build a synthetic redirect as emya does (301).
@@ -57,6 +67,57 @@ func (i *Items) Items(w http.ResponseWriter, r *http.Request) {
 		target += "?" + r.URL.RawQuery
 	}
 	http.Redirect(w, r, target, http.StatusMovedPermanently)
+}
+
+// AdminItems handles GET /Items for API-key based management tools that do not
+// pass UserId. It lists all libraries instead of applying a user folder filter.
+func (i *Items) AdminItems(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	providerMap := map[string]string{}
+	for _, part := range parseCSV(q.Get("anyprovideridequals")) {
+		kv := strings.SplitN(part, ".", 2)
+		if len(kv) == 2 {
+			providerMap[strings.ToLower(kv[0])] = kv[1]
+		}
+	}
+	search := VideoListSearch{
+		ParentID:         q.Get("parentid"),
+		StartIndex:       parseIntQuery(q.Get("startindex"), 0),
+		Limit:            parseIntQuery(q.Get("limit"), 20),
+		SortOrder:        q.Get("sortorder"),
+		SortBy:           q.Get("sortby"),
+		Filters:          parseCSV(q.Get("filters")),
+		IncludeItemTypes: parseCSV(q.Get("includeitemtypes")),
+		SearchTerm:       q.Get("searchterm"),
+		NameStartsWith:   q.Get("namestartswith"),
+		AnyProviderTmdb:  providerMap["tmdb"],
+	}
+	result, err := i.transform.VideoListAll(r.Context(), search)
+	if err != nil {
+		i.log.Error("admin video list search failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	WriteJSON(w, http.StatusOK, ItemResponse(result.Items, result.Count))
+}
+
+// ItemInfo returns GET /Items/{itemId}, a common Emby management endpoint.
+func (i *Items) ItemInfo(w http.ResponseWriter, r *http.Request) {
+	userID := ctxpkg.UserID(r.Context())
+	if userID == 0 {
+		userID = queryUserID(r)
+	}
+	data, err := i.transform.ItemInfo(r.Context(), userID, chi.URLParam(r, "itemId"))
+	if err != nil {
+		i.log.Error("top-level item info failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if data == nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	WriteJSON(w, http.StatusOK, data)
 }
 
 // Counts returns library totals.

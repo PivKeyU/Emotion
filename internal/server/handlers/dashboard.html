@@ -4,29 +4,190 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Emotion Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#11130f;--panel:#191d17;--panel2:#23281f;--line:#343a2f;--text:#eef2e8;--muted:#9ea894;--accent:#8fca5c;--accent2:#d6a84f;--bad:#e06b64;--ok:#65c681;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top left,#26321f 0,#11130f 34%,#0d0f0c 100%);color:var(--text);font:14px/1.45 "Segoe UI","Microsoft YaHei",sans-serif}button,input,select,textarea{font:inherit}button{cursor:pointer}
-.hidden{display:none!important}.muted{color:var(--muted)}.mono{font-family:var(--mono);font-size:12px}.app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);background:rgba(18,22,16,.9);padding:18px 12px;position:sticky;top:0;height:100vh}.brand{font-weight:700;font-size:18px;margin:0 0 18px}.nav{display:grid;gap:6px}.nav button{border:0;background:transparent;color:var(--muted);text-align:left;padding:10px 12px;border-radius:7px}.nav button.active,.nav button:hover{background:var(--panel2);color:var(--text)}.main{min-width:0}.top{height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 20px;background:rgba(17,19,15,.74);backdrop-filter:blur(10px);position:sticky;top:0;z-index:5}.grow{flex:1}.pill{border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted);font-size:12px}.pill.ok{color:var(--ok);border-color:#365f3f}.pill.bad{color:var(--bad);border-color:#6f3935}.view{padding:22px}.view h2{margin:0 0 4px;font-size:20px}.desc{margin:0 0 18px;color:var(--muted)}.card{background:rgba(25,29,23,.93);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}.card h3{margin:0 0 12px;font-size:15px}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.col{display:grid;gap:5px;min-width:150px}.col.grow{flex:1}.col label{font-size:12px;color:var(--muted)}input,select,textarea{background:#0f120d;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px 10px}textarea{min-height:70px}.btn{border:0;background:var(--accent);color:#111;padding:8px 13px;border-radius:6px;font-weight:650}.btn.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--line)}.btn.bad{background:#5a2825;color:#ffd2cf}.btn.sm{padding:5px 8px;font-size:12px}.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}.stat{border:1px solid var(--line);background:#12150f;border-radius:8px;padding:12px}.stat .k{color:var(--muted);font-size:12px}.stat .v{font-size:24px;font-weight:750}.library-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}.lib{border:1px solid var(--line);background:#151914;border-radius:8px;padding:14px}.lib-head{display:flex;gap:10px;align-items:center}.lib-title{font-weight:750;font-size:16px}.lib-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.switch{display:inline-flex;align-items:center;gap:7px}.switch input{accent-color:var(--accent)}.toolbar{display:grid;grid-template-columns:minmax(150px,210px) minmax(120px,160px) 1fr auto;gap:10px;align-items:end}.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px}.media{border:1px solid var(--line);background:#151914;border-radius:8px;overflow:hidden}.poster{aspect-ratio:2/3;background:#0d100c;display:flex;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:10px;position:relative}.poster img{width:100%;height:100%;object-fit:cover;display:block;position:absolute;inset:0}.badge{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.68);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:2px 7px;font-size:11px}.media-body{padding:10px}.title{font-weight:700;min-height:38px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.details{margin-top:8px;color:var(--muted);font-size:12px}.output,.logs{background:#0f120d;border:1px solid var(--line);border-radius:7px;padding:12px;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word}.progress{display:grid;gap:10px}.bar{height:9px;border-radius:99px;background:#0a0c09;border:1px solid var(--line);overflow:hidden}.bar div{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0}.file-list{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:7px}.file-row{display:grid;grid-template-columns:70px 1fr auto;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.05)}.file-row.dir{cursor:pointer}.file-row.dir:hover{background:var(--panel2)}table{width:100%;border-collapse:collapse}th,td{padding:9px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--muted);font-size:12px;background:#20251c}.login{min-height:100vh;display:grid;place-items:center;padding:20px}.login .card{width:min(460px,100%)}.modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:grid;place-items:center;z-index:20}.modal-box{width:min(920px,94vw);max-height:86vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}@media(max-width:760px){.app{grid-template-columns:1fr}.side{height:auto;position:static}.toolbar{grid-template-columns:1fr}.top{position:static}.view{padding:14px}}
+:root {
+  --bg: #f3f7fb;
+  --panel: #ffffff;
+  --panel2: #f8fafc;
+  --line: #e2e8f0;
+  --text: #334155;
+  --muted: #64748b;
+  --accent: #4ea5ff;
+  --accent-hover: #3b82f6;
+  --grad: linear-gradient(135deg, #4ea5ff 0%, #ff7eb3 100%);
+  --grad-hover: linear-gradient(135deg, #3b82f6 0%, #f43f5e 100%);
+  --bad: #ef4444;
+  --ok: #10b981;
+  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-body: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-art: "ZCOOL KuaiLe", "Nunito", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font-body); }
+button, input, select, textarea { font: inherit; outline: none; }
+button { cursor: pointer; transition: all 0.2s ease; }
+h2, h3, .brand { font-family: var(--font-art); letter-spacing: 0.5px; }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-size: 13px; }
+
+.app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+.side { background: var(--panel); border-right: 1px solid var(--line); padding: 24px 16px; position: sticky; top: 0; height: 100vh; box-shadow: var(--shadow); z-index: 20; }
+.brand { font-size: 32px; margin: 0 0 32px; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; text-align: center; }
+.nav { display: grid; gap: 8px; }
+.nav button { border: 0; background: transparent; color: var(--muted); text-align: left; padding: 14px 18px; border-radius: 12px; font-weight: 700; font-size: 15px; transition: all 0.2s; }
+.nav button:hover { background: var(--panel2); color: var(--text); transform: translateX(6px); }
+.nav button.active { background: var(--grad); color: #fff; box-shadow: 0 4px 12px rgba(78, 165, 255, 0.3); transform: translateX(6px); }
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+.top { height: 72px; border-bottom: 1px solid rgba(226, 232, 240, 0.6); display: flex; align-items: center; gap: 16px; padding: 0 32px; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 15; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05); }
+.top .pill { padding: 6px 14px; font-size: 14px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); color: var(--text); font-family: var(--font-art); box-shadow: inset 0 1px 2px rgba(0,0,0,0.02); }
+.top .pill.ok { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.3); color: #047857; }
+.top .pill.bad { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #b91c1c; }
+
+.grow { flex: 1; }
+
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; color: var(--muted); font-size: 13px; font-weight: 600; background: var(--panel); }
+.pill.ok { color: var(--ok); border-color: var(--ok); background: rgba(16, 185, 129, 0.1); }
+.pill.bad { color: var(--bad); border-color: var(--bad); background: rgba(239, 68, 68, 0.1); }
+
+.view { padding: 40px; flex: 1; }
+.view h2 { margin: 0 0 12px; font-size: 32px; color: var(--text); font-family: var(--font-art); }
+.desc { margin: 0 0 32px; color: var(--muted); font-size: 15px; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 28px; margin-bottom: 28px; box-shadow: var(--shadow); transition: transform 0.2s, box-shadow 0.2s; }
+.card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
+.card h3 { margin: 0 0 20px; font-size: 20px; color: var(--text); font-family: var(--font-art); }
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; }
+.col { display: flex; flex-direction: column; gap: 8px; min-width: 180px; }
+.col.grow { flex: 1; }
+.col label { font-size: 14px; font-weight: 700; color: var(--muted); }
+
+input, select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; font-size: 14px; font-weight: 600; transition: all 0.2s; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(78, 165, 255, 0.15); background: #fff; }
+textarea { min-height: 100px; resize: vertical; }
+
+.btn { border: 0; background: var(--grad); color: #fff; padding: 12px 24px; border-radius: 12px; font-weight: 800; font-size: 14px; letter-spacing: 0.5px; box-shadow: 0 4px 12px rgba(78, 165, 255, 0.3); }
+.btn:hover { background: var(--grad-hover); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(78, 165, 255, 0.4); }
+.btn.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.btn.secondary:hover { background: var(--panel2); border-color: var(--muted); transform: translateY(-2px); }
+.btn.bad { background: rgba(239, 68, 68, 0.1); color: var(--bad); border: 1px solid var(--bad); box-shadow: none; }
+.btn.bad:hover { background: var(--bad); color: #fff; }
+.btn.sm { padding: 8px 16px; font-size: 13px; border-radius: 10px; }
+
+/* Custom Toggle Switch for ALL Checkboxes */
+.switch { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; user-select: none; color: var(--text); font-size: 14px; }
+.switch input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 44px; height: 24px; background: var(--line); border-radius: 999px; position: relative; outline: none; cursor: pointer; transition: background 0.3s ease; margin: 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
+.switch input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); }
+.switch input[type="checkbox"]:checked { background: var(--grad); }
+.switch input[type="checkbox"]:checked::after { transform: translateX(20px); }
+
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; }
+.stat { border: 1px solid var(--line); background: var(--panel2); border-radius: 16px; padding: 20px; text-align: center; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); transition: transform 0.2s; }
+.stat:hover { transform: translateY(-2px); background: #fff; box-shadow: var(--shadow); border-color: rgba(78,165,255,0.3); }
+.stat .k { color: var(--muted); font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
+.stat .v { font-size: 32px; font-weight: 800; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; font-family: var(--font-art); margin-top: 8px; }
+
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; }
+.lib { border: 1px solid var(--line); background: var(--panel); border-radius: 20px; padding: 24px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+.lib::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--grad); opacity: 0; transition: opacity 0.3s; }
+.lib:hover::before { opacity: 1; }
+.lib-head { display: flex; gap: 16px; align-items: center; }
+.lib-title { font-weight: 800; font-size: 20px; font-family: var(--font-art); margin-bottom: 4px; }
+.lib-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--muted); background: var(--panel2); padding: 4px 8px; border-radius: 6px; display: inline-block; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; background: var(--panel2); padding: 20px; border-radius: 16px; border: 1px solid var(--line); box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }
+.toolbar .col { min-width: 140px; flex: 1; }
+.toolbar .btn { margin-bottom: 2px; }
+
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 24px; }
+.media { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s; }
+.media:hover { transform: translateY(-6px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); border-color: rgba(78, 165, 255, 0.3); }
+.poster { aspect-ratio: 2/3; background: var(--panel2); display: flex; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 16px; position: relative; overflow: hidden; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; position: absolute; inset: 0; transition: transform 0.5s ease; }
+.media:hover .poster img { transform: scale(1.05); }
+.badge { position: absolute; left: 12px; top: 12px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 700; color: #fff; backdrop-filter: blur(8px); box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+.media-body { padding: 20px; }
+.title { font-weight: 800; font-size: 16px; min-height: 48px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; color: var(--text); }
+.details { margin-top: 12px; color: var(--muted); font-size: 13px; font-weight: 600; }
+
+.output, .logs { background: #1e293b; color: #f8fafc; border-radius: 16px; padding: 20px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 14px; line-height: 1.6; box-shadow: inset 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }
+.progress { display: grid; gap: 16px; }
+.bar { height: 16px; border-radius: 999px; background: #e2e8f0; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+.bar div { height: 100%; background: var(--grad); width: 0; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 10px rgba(78, 165, 255, 0.5); }
+
+.file-list { max-height: 350px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }
+.file-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); align-items: center; transition: background 0.2s; }
+.file-row:last-child { border-bottom: none; }
+.file-row.dir { cursor: pointer; }
+.file-row.dir:hover { background: var(--panel2); }
+.file-row .pill { font-weight: 700; letter-spacing: 0.5px; }
+
+table { width: 100%; border-collapse: separate; border-spacing: 0; }
+th, td { padding: 16px 20px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-size: 13px; font-weight: 800; background: var(--panel2); text-transform: uppercase; letter-spacing: 1px; }
+th:first-child { border-top-left-radius: 12px; }
+th:last-child { border-top-right-radius: 12px; }
+tbody tr { transition: background 0.2s; }
+tbody tr:hover { background: var(--panel2); }
+
+.login { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); position: relative; overflow: hidden; }
+.login::before { content: ""; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(78,165,255,0.08) 0%, rgba(255,126,179,0.04) 50%, transparent 100%); z-index: 0; pointer-events: none; }
+.login .card { width: min(520px, 100%); position: relative; z-index: 1; padding: 48px 40px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15); border-radius: 24px; }
+.login h2 { font-size: 36px; margin-bottom: 12px; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; letter-spacing: 1px; }
+
+.modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.65); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 50; opacity: 1; transition: opacity 0.3s ease; }
+.modal.hidden { opacity: 0; pointer-events: none; display: grid !important; }
+.modal-box { width: min(1000px, 94vw); max-height: 90vh; overflow: auto; background: var(--panel); border-radius: 24px; padding: 40px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3); transform: translateY(0) scale(1); transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+.modal.hidden .modal-box { transform: translateY(30px) scale(0.95); }
+
+.actions { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; background: var(--panel2); padding: 20px; border-radius: 16px; border: 1px solid var(--line); }
+.edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.edit-grid .wide { grid-column: 1 / -1; }
+
+@media(max-width: 800px) {
+  .app { grid-template-columns: 1fr; }
+  .side { height: auto; position: sticky; top: 0; display: flex; flex-direction: column; padding: 16px 24px; z-index: 30; border-right: none; border-bottom: 1px solid var(--line); }
+  .brand { margin-bottom: 16px; font-size: 24px; }
+  .nav { display: flex; overflow-x: auto; padding-bottom: 8px; gap: 12px; }
+  .nav button { white-space: nowrap; padding: 10px 16px; font-size: 14px; }
+  .nav button:hover { transform: translateY(-2px); }
+  .nav button.active { transform: translateY(-2px); }
+  .toolbar { flex-direction: column; align-items: stretch; }
+  .edit-grid, .actions { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; }
+  .top { position: relative; padding: 0 24px; height: auto; padding-top: 16px; padding-bottom: 16px; flex-wrap: wrap; }
+  .view { padding: 24px; }
+}
 </style>
 </head>
 <body>
 <div id="login" class="login">
   <div class="card">
-    <h2>Emotion 管理面板</h2>
+    <h2>Emotion Admin</h2>
     <p class="desc">使用服务器 bootstrap API_KEY 登录面板。第三方工具 API Key 在面板内单独生成。</p>
-    <div class="row">
-      <div class="col grow"><label>Server URL</label><input id="login-url" placeholder="留空使用当前地址"></div>
-      <div class="col grow"><label>Bootstrap API_KEY</label><input id="login-key" type="password"></div>
-      <button class="btn" id="btn-login">登录</button>
+    <div class="col" style="margin-bottom: 20px; text-align: left;">
+      <label>Server URL</label>
+      <input id="login-url" placeholder="留空使用当前地址">
     </div>
-    <div class="muted mono" id="login-msg"></div>
+    <div class="col" style="margin-bottom: 32px; text-align: left;">
+      <label>Bootstrap API_KEY</label>
+      <input id="login-key" type="password">
+    </div>
+    <button class="btn" id="btn-login" style="width: 100%; padding: 16px; font-size: 16px;">登 录 到 面 板</button>
+    <div class="muted mono" id="login-msg" style="margin-top: 20px;"></div>
   </div>
 </div>
 
 <div id="app" class="app hidden">
   <aside class="side">
-    <div class="brand">Emotion Admin</div>
+    <div class="brand">Emotion</div>
     <div class="nav" id="nav">
       <button data-view="overview" class="active">概览</button>
       <button data-view="libraries">媒体库</button>
@@ -42,13 +203,13 @@
       <span id="status" class="pill">未连接</span>
       <span id="active-lib" class="pill">未选择媒体库</span>
       <span class="grow"></span>
-      <button class="btn secondary" id="btn-logs">日志</button>
-      <button class="btn secondary" id="btn-logout">退出</button>
+      <button class="btn secondary sm" id="btn-logs" style="border-radius: 99px; padding: 8px 20px;">日志</button>
+      <button class="btn secondary sm" id="btn-logout" style="border-radius: 99px; padding: 8px 20px;">退出</button>
     </div>
 
     <section id="view-overview" class="view">
       <h2>概览</h2><p class="desc">服务状态和媒体资源数量。</p>
-      <div class="card"><h3>服务器</h3><div id="server-info" class="mono muted">加载中</div></div>
+      <div class="card"><h3>服务器</h3><div id="server-info" class="mono muted" style="display: grid; gap: 8px;">加载中</div></div>
       <div class="stats" id="counts"></div>
     </section>
 
@@ -56,45 +217,57 @@
       <h2>媒体库</h2><p class="desc">先显示媒体库大分类，打开分类后再显示电影和剧集。</p>
       <div class="card">
         <h3>新建媒体库</h3>
-        <div class="row">
+        <div class="row" style="align-items: flex-end;">
           <div class="col grow"><label>名称</label><input id="lib-name" placeholder="华语电影"></div>
           <div class="col"><label>类型</label><select id="lib-role"><option value="movie">电影</option><option value="tv">剧集</option><option value="">自动</option></select></div>
-          <div class="col grow"><label>根目录</label><input id="lib-root" placeholder="/data"></div>
-          <button class="btn" id="btn-lib-create">创建</button>
+          <button class="btn" id="btn-lib-create" style="height: 45px;">创建媒体库</button>
         </div>
       </div>
       <div id="library-grid" class="library-grid"></div>
-      <div id="library-media" class="card hidden">
+      <div id="library-media" class="card hidden" style="margin-top: 32px;">
         <h3 id="media-heading">媒体内容</h3>
         <div class="toolbar">
           <div class="col"><label>类型</label><select id="media-type"><option value="">全部</option><option value="movie">电影</option><option value="tv">剧集</option></select></div>
-          <div class="col"><label>分页</label><select id="media-limit"><option>48</option><option>72</option><option>120</option></select></div>
-          <div class="col"><label>搜索</label><input id="media-search" placeholder="标题"></div>
-          <button class="btn secondary" id="btn-media-load">刷新</button>
+          <div class="col"><label>每页</label><select id="media-limit"><option>30</option><option selected>50</option><option>100</option></select></div>
+          <div class="col"><label>过滤</label><select id="media-missing"><option value="">全部</option><option value="poster">缺少海报</option><option value="info">缺少信息</option><option value="any">缺海报或信息</option></select></div>
+          <div class="col grow"><label>搜索</label><input id="media-search" placeholder="输入标题搜索..."></div>
+          <button class="btn secondary" id="btn-media-load" style="height: 45px;">刷新</button>
         </div>
-        <div id="media-grid" class="media-grid" style="margin-top:14px"></div>
-        <div class="row" style="justify-content:space-between;margin-top:12px"><span id="media-page" class="muted"></span><span><button class="btn sm secondary" id="media-prev">上一页</button> <button class="btn sm secondary" id="media-next">下一页</button></span></div>
+        <div class="stats" id="media-stats" style="margin-top:24px"></div>
+        <div class="actions" style="margin-top:24px">
+          <button class="btn" id="btn-media-scrape-missing">刮削缺海报/信息</button>
+          <button class="btn secondary" id="btn-media-scrape-poster">只刮削缺海报</button>
+          <button class="btn secondary" id="btn-media-scrape-info">只刮削缺信息</button>
+          <span style="width: 1px; height: 24px; background: var(--line); margin: 0 8px;"></span>
+          <label class="switch"><input type="checkbox" id="media-scrape-force"><span>覆盖已有字段</span></label>
+          <span id="media-scrape-state" class="muted mono" style="margin-left: auto;"></span>
+        </div>
+        <div id="media-grid" class="media-grid" style="margin-top:24px"></div>
+        <div class="row" style="justify-content:space-between;margin-top:28px; align-items: center; background: var(--panel2); padding: 16px; border-radius: 12px; border: 1px solid var(--line);"><span id="media-page" class="muted" style="font-weight: 700;"></span><span><button class="btn sm secondary" id="media-prev" style="margin-right: 8px;">上一页</button> <button class="btn sm secondary" id="media-next">下一页</button></span></div>
       </div>
     </section>
 
     <section id="view-scanner" class="view hidden">
       <h2>扫描</h2><p class="desc">可浏览容器内目录，扫描结果以数量和进度显示。</p>
       <div class="card">
-        <div class="row">
+        <div class="toolbar">
           <div class="col"><label>媒体库</label><select id="scan-lib"></select></div>
           <div class="col grow"><label>扫描路径</label><input id="scan-root" placeholder="/data"></div>
           <div class="col"><label>类型</label><select id="scan-type"><option value="">按媒体库</option><option value="movie">电影</option><option value="tv">剧集</option></select></div>
           <div class="col"><label>TMDB</label><select id="scan-scrape"><option value="">默认</option><option value="on">开启</option><option value="off">关闭</option><option value="force">强制重抓</option></select></div>
-          <label class="switch"><input type="checkbox" id="scan-follow">符号链接</label>
-          <label class="switch"><input type="checkbox" id="scan-dry">演练</label>
-          <button class="btn" id="btn-scan">开始扫描</button>
         </div>
-        <div class="row" style="margin-top:12px">
-          <span id="browse-path" class="mono muted">/data</span><span class="grow"></span>
+        <div class="actions" style="margin-top: 16px;">
+          <label class="switch"><input type="checkbox" id="scan-follow"><span>解析符号链接</span></label>
+          <label class="switch"><input type="checkbox" id="scan-dry"><span>演练模式 (不写入)</span></label>
+          <span class="grow"></span>
+          <button class="btn" id="btn-scan">立即开始扫描</button>
+        </div>
+        <div class="row" style="margin-top:28px; align-items: center;">
+          <span id="browse-path" class="mono muted grow" style="background: var(--panel2); padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); font-size: 14px;">/data</span>
           <button class="btn sm secondary" id="btn-use-path">使用当前目录</button>
           <button class="btn sm secondary" id="btn-refresh-files">刷新目录</button>
         </div>
-        <div id="file-list" class="file-list" style="margin-top:10px"></div>
+        <div id="file-list" class="file-list" style="margin-top:16px"></div>
       </div>
       <div class="card"><h3>扫描进度</h3><div id="scan-output" class="output muted">暂无扫描任务</div></div>
     </section>
@@ -102,39 +275,108 @@
     <section id="view-tmdb" class="view hidden">
       <h2>TMDB</h2><p class="desc">在面板中配置密钥、语言和自动刮削，无需手动改 env。</p>
       <div class="card">
-        <div class="row">
+        <div class="toolbar">
           <div class="col grow"><label>API Key / Bearer Token</label><input id="tmdb-key" type="password" placeholder="留空表示不修改"></div>
           <div class="col"><label>语言</label><select id="tmdb-lang"><option>zh-CN</option><option>zh-Hans-CN</option><option>en-US</option><option>ja-JP</option><option>ko-KR</option></select></div>
-          <label class="switch"><input type="checkbox" id="tmdb-auto">扫描后自动刮削</label>
-          <button class="btn" id="btn-tmdb-save">保存</button>
-          <button class="btn secondary" id="btn-tmdb-test">测试</button>
+          <div class="col" style="justify-content: center;">
+             <label class="switch" style="margin-top: 24px;"><input type="checkbox" id="tmdb-auto"><span>扫描后自动刮削</span></label>
+          </div>
+          <button class="btn" id="btn-tmdb-save" style="height: 45px;">保存设置</button>
+          <button class="btn secondary" id="btn-tmdb-test" style="height: 45px;">测试</button>
         </div>
-        <div id="tmdb-state" class="muted mono" style="margin-top:10px"></div>
+        <div id="tmdb-state" class="muted mono" style="margin-top:16px; padding: 12px; background: var(--panel2); border-radius: 12px; font-weight: 600;"></div>
       </div>
-      <div class="card"><h3>批量补全</h3><div class="row"><div class="col"><label>最多条目</label><input id="tmdb-max" type="number" value="200"></div><label class="switch"><input type="checkbox" id="tmdb-force">覆盖已有字段</label><button class="btn" id="btn-tmdb-all">开始</button></div><div id="tmdb-output" class="output muted">暂无输出</div></div>
+      <div class="card">
+        <h3>批量补全</h3>
+        <div class="actions">
+          <div class="col"><label>最多条目</label><input id="tmdb-max" type="number" value="200" style="width: 150px;"></div>
+          <span style="width: 1px; height: 24px; background: var(--line); margin: 0 8px; margin-top: 20px;"></span>
+          <label class="switch" style="margin-top: 20px;"><input type="checkbox" id="tmdb-force"><span>覆盖已有字段</span></label>
+          <span class="grow"></span>
+          <button class="btn" id="btn-tmdb-all" style="margin-top: 20px;">开始批量刮削</button>
+        </div>
+        <div id="tmdb-output" class="output muted" style="margin-top:20px;">暂无输出</div>
+      </div>
     </section>
 
     <section id="view-keys" class="view hidden">
       <h2>API Key</h2><p class="desc">为第三方工具或管理工具生成独立 Key，每个 Key 可填写备注并单独撤销。</p>
-      <div class="card"><div class="row"><div class="col"><label>名称</label><input id="key-name" placeholder="Sakura Embyboss"></div><div class="col grow"><label>备注</label><input id="key-remark" placeholder="用于哪台设备或工具"></div><button class="btn" id="btn-key-create">生成</button></div><div id="new-key" class="output hidden" style="margin-top:10px"></div></div>
-      <div class="card"><h3>已生成</h3><table><thead><tr><th>ID</th><th>名称</th><th>备注</th><th>前缀</th><th>最近使用</th><th></th></tr></thead><tbody id="keys-body"></tbody></table></div>
+      <div class="card">
+        <div class="toolbar">
+          <div class="col"><label>名称</label><input id="key-name" placeholder="Sakura Embyboss"></div>
+          <div class="col grow"><label>备注</label><input id="key-remark" placeholder="用于哪台设备或工具"></div>
+          <button class="btn" id="btn-key-create" style="height: 45px;">生成 Key</button>
+        </div>
+        <div id="new-key" class="output hidden" style="margin-top:20px; background: rgba(16, 185, 129, 0.1); color: var(--ok); border: 1px solid rgba(16, 185, 129, 0.3); padding: 16px; border-radius: 12px; font-weight: 700; font-size: 16px;"></div>
+      </div>
+      <div class="card">
+        <h3>已生成</h3>
+        <div style="overflow-x: auto; border: 1px solid var(--line); border-radius: 12px;">
+          <table><thead><tr><th>ID</th><th>名称</th><th>备注</th><th>前缀</th><th>最近使用</th><th>操作</th></tr></thead><tbody id="keys-body"></tbody></table>
+        </div>
+      </div>
     </section>
 
     <section id="view-users" class="view hidden">
-      <h2>用户</h2><div class="card"><div class="row"><div class="col"><label>用户名</label><input id="user-name"></div><div class="col"><label>密码</label><input id="user-pass" type="password"></div><button class="btn" id="btn-user-create">创建</button><button class="btn secondary" id="btn-users-load">刷新</button></div><table style="margin-top:12px"><thead><tr><th>ID</th><th>名称</th><th>管理员</th><th>状态</th><th></th></tr></thead><tbody id="users-body"></tbody></table></div>
+      <h2>用户</h2>
+      <div class="card">
+        <div class="toolbar">
+          <div class="col"><label>用户名</label><input id="user-name"></div>
+          <div class="col"><label>密码</label><input id="user-pass" type="password"></div>
+          <button class="btn" id="btn-user-create" style="height: 45px;">创建用户</button>
+          <button class="btn secondary" id="btn-users-load" style="height: 45px;">刷新</button>
+        </div>
+        <div style="overflow-x: auto; margin-top:24px; border: 1px solid var(--line); border-radius: 12px;">
+          <table><thead><tr><th>ID</th><th>名称</th><th>管理员</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-body"></tbody></table>
+        </div>
+      </div>
     </section>
 
     <section id="view-settings" class="view hidden">
-      <h2>设置</h2><div class="card"><div class="row"><div class="col grow"><label>Server URL</label><input id="cfg-url"></div><button class="btn" id="btn-save-cfg">保存</button></div></div>
+      <h2>设置</h2>
+      <div class="card">
+        <div class="toolbar">
+          <div class="col grow"><label>Server URL</label><input id="cfg-url"></div>
+          <button class="btn" id="btn-save-cfg" style="height: 45px;">保存</button>
+        </div>
+      </div>
     </section>
   </main>
 </div>
 
-<div id="log-modal" class="modal hidden"><div class="modal-box"><div class="row"><h3>后端日志</h3><span class="grow"></span><select id="log-level"><option value="">全部级别</option><option>INFO</option><option>WARN</option><option>ERROR</option><option>DEBUG</option></select><select id="log-cat"><option value="">全部分类</option><option>http</option><option>scan</option><option>watch</option><option>tmdb</option><option>auth</option><option>admin</option><option>app</option></select><button class="btn secondary" id="btn-log-refresh">刷新</button><button class="btn secondary" id="btn-log-close">关闭</button></div><div id="logs" class="logs mono" style="margin-top:10px"></div></div></div>
+<div id="log-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="row" style="margin-bottom: 24px; align-items: center;">
+      <h3 style="margin: 0; font-family: var(--font-art); font-size: 28px;">后端日志</h3>
+      <span class="grow"></span>
+      <select id="log-level" style="border-radius: 99px;"><option value="">全部级别</option><option>INFO</option><option>WARN</option><option>ERROR</option><option>DEBUG</option></select>
+      <select id="log-cat" style="border-radius: 99px;"><option value="">全部分类</option><option>http</option><option>scan</option><option>watch</option><option>tmdb</option><option>auth</option><option>admin</option><option>app</option></select>
+      <button class="btn secondary" id="btn-log-refresh" style="border-radius: 99px;">刷新</button>
+      <button class="btn secondary" id="btn-log-close" style="border-radius: 99px;">关闭</button>
+    </div>
+    <div id="logs" class="logs mono"></div>
+  </div>
+</div>
+
+<div id="media-edit-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="row" style="margin-bottom: 24px; align-items: center;">
+      <h3 style="margin: 0; font-family: var(--font-art); font-size: 28px;">编辑元数据</h3>
+      <span class="grow"></span>
+      <button class="btn secondary" id="btn-media-edit-close">关闭</button>
+    </div>
+    <div id="media-edit-form" class="edit-grid"></div>
+    <div class="row" style="margin-top: 32px; align-items: center; background: var(--panel2); padding: 16px 20px; border-radius: 16px; border: 1px solid var(--line);">
+      <span id="media-edit-msg" class="muted mono" style="font-weight: 700;"></span>
+      <span class="grow"></span>
+      <button class="btn" id="btn-media-edit-save" style="padding: 12px 32px; font-size: 16px;">保存更改</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const LS="emotion.admin.v2";
-const S={url:"",token:"",libs:[],selectedLib:null,mediaOffset:0,mediaTotal:0,mediaChildren:{},browsePath:"/data",logTimer:null};
+const S={url:"",token:"",libs:[],selectedLib:null,mediaOffset:0,mediaTotal:0,mediaStats:null,mediaChildren:{},mediaItems:[],editingMedia:null,browsePath:"/data",logTimer:null};
 const $=(s,r=document)=>r.querySelector(s); const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]))}
 function base(){return (S.url||"").replace(/\/$/,"")} function withToken(p){const sep=p.includes("?")?"&":"?";return base()+p+sep+"api_key="+encodeURIComponent(S.token)}
@@ -147,15 +389,21 @@ async function login(){S.url=$("#login-url").value.trim();const key=$("#login-ke
 async function boot(){status("连接中","ok");try{const info=await api("GET","/System/Info");$("#server-info").innerHTML=Object.entries({名称:info.ServerName,版本:info.Version,ID:info.Id,地址:info.LocalAddress}).map(([k,v])=>`<div><span class=muted>${k}</span>: ${esc(v)}</div>`).join("");status(info.ServerName||"已连接","ok");await Promise.allSettled([loadCounts(),loadLibraries(),loadKeys()]);}catch(e){status("连接失败","bad");$("#server-info").textContent=e.message}}
 async function loadCounts(){const c=await api("GET","/Items/Counts");$("#counts").innerHTML=[["电影",c.MovieCount],["剧集",c.SeriesCount],["集数",c.EpisodeCount],["媒体库",S.libs.length]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}
 async function loadLibraries(){try{S.libs=await api("GET","/admin/libraries");renderLibraries();populateLibSelect();await loadCounts()}catch(e){$("#library-grid").innerHTML=`<div class=muted>${esc(e.message)}</div>`}}
-function renderLibraries(){const g=$("#library-grid");if(!S.libs.length){g.innerHTML="<div class=muted>暂无媒体库</div>";return}g.innerHTML=S.libs.map(l=>`<div class=lib data-id="${l.id}"><div class=lib-head><div class=grow><div class=lib-title>${esc(l.name)}</div><div class="muted lib-path">${esc(l.root_path||"未设置路径")}</div></div><span class=pill>${esc(l.role||"auto")}</span></div><div class=stats style="margin:12px 0"><div class=stat><div class=k>电影</div><div class=v>${l.movie_count||0}</div></div><div class=stat><div class=k>剧集</div><div class=v>${l.series_count||0}</div></div><div class=stat><div class=k>集数</div><div class=v>${l.episode_count||0}</div></div></div><div class=row><button class="btn sm" data-act=open>打开</button><button class="btn sm secondary" data-act=scan>扫描</button><label class=switch><input type=checkbox data-act=watch ${l.watch_enabled?"checked":""}>监控</label><button class="btn sm bad" data-act=del>删除</button></div></div>`).join("")}
+function renderLibraries(){const g=$("#library-grid");if(!S.libs.length){g.innerHTML="<div class=muted>暂无媒体库</div>";return}g.innerHTML=S.libs.map(l=>`<div class=lib data-id="${l.id}"><div class=lib-head><div class=grow><div class=lib-title>${esc(l.name)}</div><div class="muted lib-path">${esc(l.root_path||"未设置路径")}</div></div><span class=pill>${esc(l.role||"auto")}</span></div><div class=stats style="margin:12px 0"><div class=stat><div class=k>电影</div><div class=v>${l.movie_count||0}</div></div><div class=stat><div class=k>剧集</div><div class=v>${l.series_count||0}</div></div><div class=stat><div class=k>集数</div><div class=v>${l.episode_count||0}</div></div></div><div class=row><button class="btn sm" data-act=open>打开</button><button class="btn sm secondary" data-act=scan>扫描</button><label class=switch><input type=checkbox data-act=watch ${l.watch_enabled?"checked":""}><span>监控</span></label><button class="btn sm bad" data-act=del>删除</button></div></div>`).join("")}
 function populateLibSelect(){const html=S.libs.map(l=>`<option value="${l.id}">${esc(l.name)} (#${l.id})</option>`).join("");$("#scan-lib").innerHTML=html;if(S.selectedLib&&S.libs.some(l=>l.id===S.selectedLib.id))$("#scan-lib").value=S.selectedLib.id}
-async function createLibrary(){const b={name:$("#lib-name").value.trim(),role:$("#lib-role").value,root_path:$("#lib-root").value.trim(),watch_interval_seconds:30};if(!b.name)return;await api("POST","/admin/libraries",b);$("#lib-name").value="";await loadLibraries()}
+async function createLibrary(){const b={name:$("#lib-name").value.trim(),role:$("#lib-role").value,root_path:"",watch_interval_seconds:30};if(!b.name)return;await api("POST","/admin/libraries",b);$("#lib-name").value="";await loadLibraries()}
 async function patchLibrary(l,patch){await api("PATCH","/admin/libraries/"+l.id,{name:l.name,role:l.role,root_path:l.root_path,watch_enabled:!!patch.watch_enabled,watch_interval_seconds:l.watch_interval_seconds||30});await loadLibraries()}
 async function openLib(id){S.selectedLib=S.libs.find(l=>String(l.id)===String(id));S.mediaOffset=0;$("#active-lib").textContent=S.selectedLib?S.selectedLib.name:"未选择媒体库";$("#library-media").classList.remove("hidden");$("#media-heading").textContent=S.selectedLib.name+" / 媒体内容";await loadMedia(true)}
-async function loadMedia(reset=false){if(!S.selectedLib)return;if(reset)S.mediaOffset=0;const q=new URLSearchParams({library_id:S.selectedLib.id,limit:$("#media-limit").value,offset:S.mediaOffset});if($("#media-type").value)q.set("type",$("#media-type").value);if($("#media-search").value.trim())q.set("search",$("#media-search").value.trim());$("#media-grid").innerHTML="<div class=muted>加载中</div>";const r=await api("GET","/admin/media?"+q);S.mediaTotal=Number(r.total||0);const items=r.items||[];$("#media-grid").innerHTML=items.length?items.map(mediaCard).join(""):"<div class=muted>暂无内容</div>";$("#media-page").textContent=`${S.mediaOffset+Math.min(items.length?1:0,1)}-${Math.min(S.mediaOffset+items.length,S.mediaTotal)} / ${S.mediaTotal}`}
-function mediaCard(i){const img=i.poster_url?`<img src="${esc(asset(i.poster_url))}" onerror="this.remove()">`:"";const meta=i.type==="tv"?`${i.season_count||0} 季 / ${i.episode_count||0} 集`:`${i.media_count||0} 个媒体`;return `<div class=media><div class=poster>${img}<span>${esc(i.title)}</span><span class=badge>${i.type==="tv"?"剧集":"电影"}</span></div><div class=media-body><div class=title>${esc(i.title)}</div><div class=muted>${meta}${i.year?" / "+i.year:""}</div><details data-id="${i.id}"><summary>展开</summary><div class=details id="child-${i.id}">加载中</div></details></div></div>`}
+async function loadMedia(reset=false){if(!S.selectedLib)return;if(reset)S.mediaOffset=0;const q=new URLSearchParams({library_id:S.selectedLib.id,limit:$("#media-limit").value,offset:S.mediaOffset});const typ=$("#media-type").value;if(typ)q.set("type",typ);if($("#media-missing").value)q.set("missing",$("#media-missing").value);if($("#media-search").value.trim())q.set("search",$("#media-search").value.trim());$("#media-grid").innerHTML="<div class=muted>加载中</div>";const [r,stats]=await Promise.all([api("GET","/admin/media?"+q),loadMediaStats(false)]);S.mediaTotal=Number(r.total||0);S.mediaItems=r.items||[];$("#media-grid").innerHTML=S.mediaItems.length?S.mediaItems.map(mediaCard).join(""):"<div class=muted>暂无内容</div>";$("#media-page").textContent=`${S.mediaOffset+Math.min(S.mediaItems.length?1:0,1)}-${Math.min(S.mediaOffset+S.mediaItems.length,S.mediaTotal)} / ${S.mediaTotal}`;renderMediaStats(stats)}
+async function loadMediaStats(render=true){if(!S.selectedLib)return null;const q=new URLSearchParams({library_id:S.selectedLib.id});if($("#media-type").value)q.set("type",$("#media-type").value);const s=await api("GET","/admin/media/stats?"+q);S.mediaStats=s;if(render)renderMediaStats(s);return s}
+function renderMediaStats(s){if(!s)return;$("#media-stats").innerHTML=[["总资源",s.total],["已刮削",s.scraped],["未刮削",s.unscraped],["缺海报",s.missing_poster],["缺信息",s.missing_info],["完整",s.complete]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}
+function mediaCard(i){const img=i.poster_url?`<img src="${esc(asset(i.poster_url))}" onerror="this.remove()">`:"";const meta=i.type==="tv"?`${i.season_count||0} 季 / ${i.episode_count||0} 集`:`${i.media_count||0} 个媒体`;const flags=[i.missing_poster?"缺海报":"",i.missing_info?"缺信息":""].filter(Boolean).map(x=>`<span class="pill bad">${x}</span>`).join(" ");return `<div class=media><div class=poster>${img}<span>${esc(i.title)}</span><span class=badge>${i.type==="tv"?"剧集":"电影"}</span></div><div class=media-body><div class=title>${esc(i.title)}</div><div class=muted>${meta}${i.year?" / "+i.year:""}</div><div style="margin-top:6px">${flags}</div><div class=row style="margin-top:8px"><button class="btn sm secondary" data-edit="${i.id}">编辑</button><button class="btn sm secondary" data-refresh="${i.id}">刮削</button></div><details data-id="${i.id}"><summary>展开</summary><div class=details id="child-${i.id}">加载中</div></details></div></div>`}
 async function loadChildren(id){if(S.mediaChildren[id])return renderChildren(id,S.mediaChildren[id]);const d=await api("GET","/admin/media/"+id+"/children");S.mediaChildren[id]=d;renderChildren(id,d)}
 function renderChildren(id,d){const el=$("#child-"+id);if(!el)return;let html="";if(d.type==="tv"){html+=`<div>${(d.seasons||[]).length} 季，${(d.episodes||[]).length} 集</div>`;html+=(d.episodes||[]).slice(0,30).map(e=>`<div>S${e.season_number||0}E${e.episode_number}: ${esc(e.title)}</div>`).join("")}else{html+=(d.sources||[]).map(s=>`<div>${esc(s.name)} <span class=muted>${esc(s.path_url||"")}</span></div>`).join("")}el.innerHTML=html||"暂无详情"}
+function openMediaEdit(id){const item=S.mediaItems.find(x=>String(x.id)===String(id));if(!item)return;S.editingMedia=item;$("#media-edit-msg").textContent="";$("#media-edit-form").innerHTML=`<div class=col><label>标题</label><input id="edit-title" value="${esc(item.title||"")}"></div><div class=col><label>原始标题</label><input id="edit-original" value="${esc(item.original_title||"")}"></div><div class=col><label>TMDB ID</label><input id="edit-tmdb" value="${esc(item.tmdb_id||"")}"></div><div class=col><label>首播/上映日期</label><input id="edit-date" placeholder="YYYY-MM-DD" value="${esc(item.date_air||"")}"></div><div class=col><label>时长(分钟)</label><input id="edit-runtime" type="number" min="0" value="${esc(item.runtime||"")}"></div><div class=col><label>标语</label><input id="edit-tagline" value="${esc(item.tagline||"")}"></div><div class="col wide"><label>简介</label><textarea id="edit-overview">${esc(item.overview||"")}</textarea></div><div class="col wide"><label>海报 URL / TMDB 路径</label><input id="edit-poster" value="${esc(item.poster_url||"")}"></div><div class="col wide"><label>背景图 URL / TMDB 路径</label><input id="edit-backdrop" value="${esc(item.backdrop_url||"")}"></div>`;$("#media-edit-modal").classList.remove("hidden")}
+async function saveMediaEdit(){const item=S.editingMedia;if(!item)return;$("#media-edit-msg").textContent="保存中";const body={title:$("#edit-title").value.trim(),original_title:$("#edit-original").value.trim(),tmdb_id:$("#edit-tmdb").value.trim(),date_air:$("#edit-date").value.trim(),runtime:Number($("#edit-runtime").value||0),tagline:$("#edit-tagline").value.trim(),overview:$("#edit-overview").value.trim(),poster_url:$("#edit-poster").value.trim(),backdrop_url:$("#edit-backdrop").value.trim()};await api("PATCH","/admin/media/"+item.id,body);$("#media-edit-modal").classList.add("hidden");S.editingMedia=null;await loadMedia()}
+async function refreshOneTMDB(id){await api("POST","/admin/items/"+id+"/tmdb/refresh",{force:false});await loadMedia()}
+async function scrapeMissingMedia(missing){if(!S.selectedLib)return;const state=$("#media-scrape-state");state.textContent="刮削中...";const body={library_id:S.selectedLib.id,video_type:$("#media-type").value,max:Number((S.mediaStats&&S.mediaStats.total)||1000),missing,force:$("#media-scrape-force").checked};const job=await api("POST","/admin/tmdb/refresh-all/start",body);while(true){const j=await api("GET","/admin/tmdb/refresh-all/"+job.id);const p=j.progress||{};const total=Number(p.total||0),done=Number(p.processed||0),left=Math.max(0,total-done);state.textContent=`${j.status}：${done}/${total}，剩余 ${left}，匹配 ${p.matched||0}，跳过 ${p.skipped||0}，失败 ${p.failed||0}`;if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}await loadMedia(true)}
 async function loadFiles(path="/data"){S.browsePath=path;$("#browse-path").textContent=path;try{const r=await api("GET","/admin/files?path="+encodeURIComponent(path));S.browsePath=r.path;$("#browse-path").textContent=r.path;$("#file-list").innerHTML=(r.entries||[]).map(e=>`<div class="file-row ${e.type}" data-path="${esc(e.path)}"><span class=pill>${e.type==="dir"?"目录":(e.media?"媒体":"文件")}</span><span>${esc(e.name)}</span><span class=muted>${e.size||""}</span></div>`).join("")}catch(e){$("#file-list").innerHTML=`<div class=muted style="padding:10px">${esc(e.message)}</div>`}}
 async function runScan(){const id=$("#scan-lib").value;const root=$("#scan-root").value.trim();if(!id||!root)return;$("#scan-output").innerHTML="启动扫描";const job=await api("POST","/admin/library/scan/start",{library_id:Number(id),root,default_type:$("#scan-type").value,scrape:$("#scan-scrape").value,follow_symlinks:$("#scan-follow").checked,dry_run:$("#scan-dry").checked});while(true){const j=await api("GET","/admin/library/scan/"+job.id);renderScan(j);if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}await loadLibraries()}
 function reportOf(r){return r&&r.import?r.import:r} function renderScan(j){const p=j.progress||{},rep=p.report||{},total=Number(p.total_dirs||0),done=Number(p.processed_dirs||0),pct=total?Math.round(done*100/total):0;$("#scan-output").innerHTML=`<div class=progress><div><span class=pill>${esc(j.status)}</span> ${total?done+"/"+total:"遍历 "+(p.walked_dirs||0)}</div><div class=bar><div style="width:${pct}%"></div></div><div class="mono muted">${esc(p.current||"")}</div><div class=stats>${[["电影",rep.movies_imported],["剧集",rep.series_imported],["集数",rep.episodes_imported],["媒体源",rep.media_rows_imported]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}</div>${j.result?`<div class=muted>完成：${JSON.stringify(reportOf(j.result))}</div>`:""}</div>`}
@@ -169,7 +417,7 @@ async function createKey(){const r=await api("POST","/admin/api-keys",{name:$("#
 async function loadUsers(){const us=await api("GET","/Users");$("#users-body").innerHTML=(us||[]).map(u=>`<tr><td>${esc(u.Id)}</td><td>${esc(u.Name)}</td><td>${u.Policy&&u.Policy.IsAdministrator?"是":"否"}</td><td>${u.Policy&&u.Policy.IsDisabled?"禁用":"正常"}</td><td></td></tr>`).join("")}
 async function createUser(){await api("POST","/Users/New",{Name:$("#user-name").value.trim(),Password:$("#user-pass").value});$("#user-name").value="";$("#user-pass").value="";await loadUsers()}
 async function loadLogs(){const q=new URLSearchParams({limit:"250"});if($("#log-level").value)q.set("level",$("#log-level").value);if($("#log-cat").value)q.set("category",$("#log-cat").value);const r=await api("GET","/admin/logs?"+q);$("#logs").innerHTML=(r.items||[]).map(l=>`[${esc(l.time)}] ${esc(l.level)} ${esc(l.category)} ${esc(l.message)} ${esc(JSON.stringify(l.attrs||{}))}`).join("\n")}
-function bind(){ $("#btn-login").onclick=login;$("#login-key").addEventListener("keydown",e=>{if(e.key==="Enter")login()});$("#nav").onclick=e=>{const b=e.target.closest("button[data-view]");if(b)show(b.dataset.view)};$("#btn-logout").onclick=()=>{localStorage.removeItem(LS);location.reload()};$("#btn-lib-create").onclick=createLibrary;$("#library-grid").onclick=async e=>{const c=e.target.closest(".lib");if(!c)return;const l=S.libs.find(x=>String(x.id)===c.dataset.id);const act=e.target.dataset.act;if(act==="open")openLib(l.id);if(act==="scan"){show("scanner");$("#scan-lib").value=l.id;$("#scan-root").value=l.root_path||"/data"}if(act==="del"&&confirm("删除媒体库？")){await api("DELETE","/admin/libraries/"+l.id);await loadLibraries()}};$("#library-grid").onchange=e=>{if(e.target.dataset.act==="watch"){const c=e.target.closest(".lib");const l=S.libs.find(x=>String(x.id)===c.dataset.id);patchLibrary(l,{watch_enabled:e.target.checked})}};$("#btn-media-load").onclick=()=>loadMedia(true);$("#media-type").onchange=()=>loadMedia(true);$("#media-limit").onchange=()=>loadMedia(true);$("#media-search").addEventListener("keydown",e=>{if(e.key==="Enter")loadMedia(true)});$("#media-prev").onclick=()=>{S.mediaOffset=Math.max(0,S.mediaOffset-Number($("#media-limit").value));loadMedia()};$("#media-next").onclick=()=>{if(S.mediaOffset+Number($("#media-limit").value)<S.mediaTotal){S.mediaOffset+=Number($("#media-limit").value);loadMedia()}};$("#media-grid").addEventListener("toggle",e=>{if(e.target.matches("details[data-id]")&&e.target.open)loadChildren(e.target.dataset.id)},true);$("#file-list").onclick=e=>{const r=e.target.closest(".file-row.dir");if(r)loadFiles(r.dataset.path)};$("#btn-use-path").onclick=()=>{$("#scan-root").value=S.browsePath};$("#btn-refresh-files").onclick=()=>loadFiles(S.browsePath);$("#btn-scan").onclick=runScan;$("#btn-tmdb-save").onclick=saveTMDB;$("#btn-tmdb-test").onclick=testTMDB;$("#btn-tmdb-all").onclick=refreshAllTMDB;$("#btn-key-create").onclick=createKey;$("#keys-body").onclick=async e=>{const b=e.target.closest("button[data-key]");if(b&&confirm("撤销这个 API Key？")){await api("DELETE","/admin/api-keys/"+b.dataset.key);await loadKeys()}};$("#btn-user-create").onclick=createUser;$("#btn-users-load").onclick=loadUsers;$("#btn-logs").onclick=()=>{$("#log-modal").classList.remove("hidden");loadLogs();S.logTimer=setInterval(loadLogs,4000)};$("#btn-log-close").onclick=()=>{$("#log-modal").classList.add("hidden");clearInterval(S.logTimer)};$("#btn-log-refresh").onclick=loadLogs;$("#log-level").onchange=loadLogs;$("#log-cat").onchange=loadLogs;$("#btn-save-cfg").onclick=()=>{S.url=$("#cfg-url").value.trim();save();boot()}}
+function bind(){ $("#btn-login").onclick=login;$("#login-key").addEventListener("keydown",e=>{if(e.key==="Enter")login()});$("#nav").onclick=e=>{const b=e.target.closest("button[data-view]");if(b)show(b.dataset.view)};$("#btn-logout").onclick=()=>{localStorage.removeItem(LS);location.reload()};$("#btn-lib-create").onclick=createLibrary;$("#library-grid").onclick=async e=>{const c=e.target.closest(".lib");if(!c)return;const l=S.libs.find(x=>String(x.id)===c.dataset.id);const act=e.target.dataset.act;if(act==="open")openLib(l.id);if(act==="scan"){show("scanner");$("#scan-lib").value=l.id;$("#scan-root").value=l.root_path||"/data"}if(act==="del"&&confirm("删除媒体库？")){await api("DELETE","/admin/libraries/"+l.id);await loadLibraries()}};$("#library-grid").onchange=e=>{if(e.target.dataset.act==="watch"){const c=e.target.closest(".lib");const l=S.libs.find(x=>String(x.id)===c.dataset.id);patchLibrary(l,{watch_enabled:e.target.checked})}};$("#btn-media-load").onclick=()=>loadMedia(true);$("#media-type").onchange=()=>loadMedia(true);$("#media-limit").onchange=()=>loadMedia(true);$("#media-missing").onchange=()=>loadMedia(true);$("#btn-media-scrape-missing").onclick=()=>scrapeMissingMedia("any");$("#btn-media-scrape-poster").onclick=()=>scrapeMissingMedia("poster");$("#btn-media-scrape-info").onclick=()=>scrapeMissingMedia("info");$("#media-search").addEventListener("keydown",e=>{if(e.key==="Enter")loadMedia(true)});$("#media-prev").onclick=()=>{S.mediaOffset=Math.max(0,S.mediaOffset-Number($("#media-limit").value));loadMedia()};$("#media-next").onclick=()=>{if(S.mediaOffset+Number($("#media-limit").value)<S.mediaTotal){S.mediaOffset+=Number($("#media-limit").value);loadMedia()}};$("#media-grid").onclick=e=>{const edit=e.target.closest("button[data-edit]");if(edit)openMediaEdit(edit.dataset.edit);const refresh=e.target.closest("button[data-refresh]");if(refresh)refreshOneTMDB(refresh.dataset.refresh)};$("#media-grid").addEventListener("toggle",e=>{if(e.target.matches("details[data-id]")&&e.target.open)loadChildren(e.target.dataset.id)},true);$("#btn-media-edit-close").onclick=()=>{$("#media-edit-modal").classList.add("hidden");S.editingMedia=null};$("#btn-media-edit-save").onclick=saveMediaEdit;$("#file-list").onclick=e=>{const r=e.target.closest(".file-row.dir");if(r)loadFiles(r.dataset.path)};$("#btn-use-path").onclick=()=>{$("#scan-root").value=S.browsePath};$("#btn-refresh-files").onclick=()=>loadFiles(S.browsePath);$("#btn-scan").onclick=runScan;$("#btn-tmdb-save").onclick=saveTMDB;$("#btn-tmdb-test").onclick=testTMDB;$("#btn-tmdb-all").onclick=refreshAllTMDB;$("#btn-key-create").onclick=createKey;$("#keys-body").onclick=async e=>{const b=e.target.closest("button[data-key]");if(b&&confirm("撤销这个 API Key？")){await api("DELETE","/admin/api-keys/"+b.dataset.key);await loadKeys()}};$("#btn-user-create").onclick=createUser;$("#btn-users-load").onclick=loadUsers;$("#btn-logs").onclick=()=>{$("#log-modal").classList.remove("hidden");loadLogs();S.logTimer=setInterval(loadLogs,4000)};$("#btn-log-close").onclick=()=>{$("#log-modal").classList.add("hidden");clearInterval(S.logTimer)};$("#btn-log-refresh").onclick=loadLogs;$("#log-level").onchange=loadLogs;$("#log-cat").onchange=loadLogs;$("#btn-save-cfg").onclick=()=>{S.url=$("#cfg-url").value.trim();save();boot()}}
 function init(){bind();const c=load();if(c&&c.token){S.url=c.url||"";S.token=c.token;$("#login").classList.add("hidden");$("#app").classList.remove("hidden");$("#cfg-url").value=S.url;boot()}else{$("#login-url").value=location.origin}}
 init();
 </script>

@@ -96,7 +96,13 @@ func extractToken(r *http.Request) string {
 	if t := q.Get("api_key"); t != "" {
 		return t
 	}
+	if t := q.Get("x-mediabrowser-token"); t != "" {
+		return t
+	}
 	if t := r.Header.Get("X-Emby-Token"); t != "" {
+		return t
+	}
+	if t := r.Header.Get("X-MediaBrowser-Token"); t != "" {
 		return t
 	}
 	if raw := r.Header.Get("X-Emby-Authorization"); raw != "" {

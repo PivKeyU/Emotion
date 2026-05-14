@@ -241,7 +241,10 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 
 // Base returns the authenticated user's profile (/Users/{userId}).
 func (u *Users) Base(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	data, err := u.transform.User(r.Context(), userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -257,7 +260,10 @@ func (u *Users) Base(w http.ResponseWriter, r *http.Request) {
 
 // Views returns the user's visible libraries (emby calls this at startup).
 func (u *Users) Views(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	rows, err := u.transform.GetUserLibrary(r.Context(), userID)
 	if err != nil {
 		u.log.Error("GetUserLibrary failed", "err", err)
@@ -269,7 +275,10 @@ func (u *Users) Views(w http.ResponseWriter, r *http.Request) {
 
 // Items handles /Users/{userId}/Items with emya's search semantics.
 func (u *Users) Items(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	q := r.URL.Query()
 
 	includeTypes := parseCSV(q.Get("includeitemtypes"))
@@ -346,7 +355,10 @@ func (u *Users) Items(w http.ResponseWriter, r *http.Request) {
 
 // ItemsLatest returns the "latest" set from a library.
 func (u *Users) ItemsLatest(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	q := r.URL.Query()
 	search := VideoListSearch{
 		ParentID:  q.Get("parentid"),
@@ -365,7 +377,10 @@ func (u *Users) ItemsLatest(w http.ResponseWriter, r *http.Request) {
 
 // ItemsResume returns in-progress items ("Continue Watching").
 func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	ctx := r.Context()
 	q := r.URL.Query()
 
@@ -496,7 +511,10 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 
 // ItemInfo returns /Users/{userId}/Items/{itemId}.
 func (u *Users) ItemInfo(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	itemID := chi.URLParam(r, "itemId")
 
 	data, err := u.transform.ItemInfo(r.Context(), userID, itemID)
@@ -519,7 +537,10 @@ func (u *Users) EmptyArray(w http.ResponseWriter, r *http.Request) {
 
 // HideFromResume clears play progress for a given item.
 func (u *Users) HideFromResume(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	ctx := r.Context()
 	kind, numericID, ok := emby.ParseItemID(chi.URLParam(r, "itemId"))
 	if !ok {
@@ -547,7 +568,10 @@ func (u *Users) HideFromResume(w http.ResponseWriter, r *http.Request) {
 
 // Favorite toggles a favorite (POST adds, DELETE removes).
 func (u *Users) Favorite(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	ctx := r.Context()
 	kind, numericID, ok := emby.ParseItemID(chi.URLParam(r, "itemId"))
 	if !ok {
@@ -596,7 +620,10 @@ func (u *Users) Favorite(w http.ResponseWriter, r *http.Request) {
 
 // Played marks an item played or unplayed.
 func (u *Users) Played(w http.ResponseWriter, r *http.Request) {
-	userID := ctxpkg.UserID(r.Context())
+	userID := routeUserID(r)
+	if userID == 0 {
+		userID = ctxpkg.UserID(r.Context())
+	}
 	ctx := r.Context()
 	kind, numericID, ok := emby.ParseItemID(chi.URLParam(r, "itemId"))
 	if !ok {
@@ -640,8 +667,25 @@ func (u *Users) Played(w http.ResponseWriter, r *http.Request) {
 		"PlaybackPositionTicks": 0,
 		"Played":                isPlayed,
 	})
-	// Silence unused strconv import in this file.
-	_ = strconv.Itoa
+}
+
+func routeUserID(r *http.Request) int64 {
+	if !ctxpkg.IsAdmin(r.Context()) {
+		return 0
+	}
+	if id, err := strconv.ParseInt(chi.URLParam(r, "userId"), 10, 64); err == nil && id > 0 {
+		return id
+	}
+	return queryUserID(r)
+}
+
+func queryUserID(r *http.Request) int64 {
+	for _, key := range []string{"userid", "user_id"} {
+		if id, err := strconv.ParseInt(r.URL.Query().Get(key), 10, 64); err == nil && id > 0 {
+			return id
+		}
+	}
+	return 0
 }
 
 // embyDevice is the parsed x-emby-authorization payload.
