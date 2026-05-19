@@ -542,10 +542,6 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 	if !s.Enabled() {
 		return nil, errors.New("tmdb scraper disabled")
 	}
-	if opts.MaxItems <= 0 {
-		opts.MaxItems = 200
-	}
-
 	start := time.Now()
 	rep := &BatchResult{}
 
@@ -569,13 +565,16 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 	default:
 		where = append(where, "("+missingInfoSQL()+" OR "+missingPosterSQL()+")")
 	}
-	args = append(args, opts.MaxItems)
+	limitSQL := ""
+	if opts.MaxItems > 0 {
+		limitSQL = " LIMIT ?"
+		args = append(args, opts.MaxItems)
+	}
 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT vl.id, vl.video_type, vl.title FROM video_list vl
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY vl.updated_at DESC
-		LIMIT ?
+		ORDER BY vl.updated_at DESC`+limitSQL+`
 	`, args...)
 	if err != nil {
 		return nil, err

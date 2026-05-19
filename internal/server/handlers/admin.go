@@ -49,6 +49,9 @@ type Admin struct {
 
 	tmdbMu   sync.Mutex
 	tmdbJobs map[string]*tmdbRefreshJob
+
+	probeMu   sync.Mutex
+	probeJobs map[string]*mediaProbeJob
 }
 
 // NewAdmin constructs the handler.
@@ -71,6 +74,7 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		scanJobs:  map[string]*scanJob{},
 		watchJobs: map[string]*watchJob{},
 		tmdbJobs:  map[string]*tmdbRefreshJob{},
+		probeJobs: map[string]*mediaProbeJob{},
 	}
 	settings := a.loadTMDBSettings(context.Background())
 	a.cfg.TMDBAutoScrape = settings.AutoScrape
@@ -953,10 +957,20 @@ type adminMediaEpisode struct {
 }
 
 type adminMediaSource struct {
-	ID      int64  `json:"id"`
-	UUID    string `json:"uuid"`
-	Name    string `json:"name"`
-	PathURL string `json:"path_url,omitempty"`
+	ID          int64  `json:"id"`
+	UUID        string `json:"uuid"`
+	Name        string `json:"name"`
+	PathType    string `json:"path_type,omitempty"`
+	PathURL     string `json:"path_url,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	Duration    int64  `json:"duration,omitempty"`
+	Bitrate     int64  `json:"bitrate,omitempty"`
+	Container   string `json:"container,omitempty"`
+	VideoCodec  string `json:"video_codec,omitempty"`
+	AudioCodec  string `json:"audio_codec,omitempty"`
+	Width       int64  `json:"width,omitempty"`
+	Height      int64  `json:"height,omitempty"`
+	StreamCount int    `json:"stream_count,omitempty"`
 }
 
 type adminMediaUpdateRequest struct {
@@ -1181,7 +1195,9 @@ func (a *Admin) adminEpisodes(r *http.Request, videoListID int64) ([]adminMediaE
 
 func (a *Admin) adminSources(r *http.Request, videoListID int64) ([]adminMediaSource, error) {
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT id, uuid, name, COALESCE(path_url, '')
+		SELECT id, uuid, name, COALESCE(path_url, ''), COALESCE(file_size, 0),
+		       COALESCE(file_second, 0), COALESCE(file_container, ''),
+		       COALESCE(file_matadata::text, ''), COALESCE(path_type, '')
 		FROM video_media
 		WHERE video_list_id = ? AND deleted_at IS NULL
 		ORDER BY id ASC
@@ -1194,12 +1210,65 @@ func (a *Admin) adminSources(r *http.Request, videoListID int64) ([]adminMediaSo
 	out := []adminMediaSource{}
 	for rows.Next() {
 		var s adminMediaSource
-		if err := rows.Scan(&s.ID, &s.UUID, &s.Name, &s.PathURL); err != nil {
+		var metadata string
+		if err := rows.Scan(&s.ID, &s.UUID, &s.Name, &s.PathURL, &s.Size, &s.Duration, &s.Container, &metadata, &s.PathType); err != nil {
 			return nil, err
 		}
+		s.applyProbeSummary(metadata)
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+func (s *adminMediaSource) applyProbeSummary(metadata string) {
+	if strings.TrimSpace(metadata) == "" {
+		return
+	}
+	var meta struct {
+		Streams []map[string]any `json:"streams"`
+		Format  struct {
+			BitRate any `json:"bit_rate"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &meta); err != nil {
+		return
+	}
+	s.StreamCount = len(meta.Streams)
+	if s.Bitrate == 0 {
+		s.Bitrate = int64FromAny(meta.Format.BitRate)
+	}
+	for _, stream := range meta.Streams {
+		codecType, _ := stream["codec_type"].(string)
+		codecName, _ := stream["codec_name"].(string)
+		switch codecType {
+		case "video":
+			if s.VideoCodec == "" {
+				s.VideoCodec = codecName
+				s.Width = int64FromAny(stream["width"])
+				s.Height = int64FromAny(stream["height"])
+			}
+		case "audio":
+			if s.AudioCodec == "" {
+				s.AudioCodec = codecName
+			}
+		}
+	}
+}
+
+func int64FromAny(v any) int64 {
+	switch x := v.(type) {
+	case string:
+		n, _ := strconv.ParseInt(strings.TrimSpace(x), 10, 64)
+		return n
+	case float64:
+		return int64(x)
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	default:
+		return 0
+	}
 }
 
 func adminImageURL(pathType, pathURL, itemID, imageType string) string {
@@ -1438,6 +1507,7 @@ type scanRequest struct {
 	DefaultType    string `json:"default_type"` // movie | tv | (empty = auto)
 	FollowSymlinks bool   `json:"follow_symlinks"`
 	DryRun         bool   `json:"dry_run"`
+	ProbeMedia     bool   `json:"probe_media"`
 	// Scrape controls TMDB backfill on items touched by this import.
 	// Accepts: "" (use server default TMDB_AUTO_SCRAPE), "on", "off", "force".
 	Scrape string `json:"scrape"`
@@ -1612,6 +1682,7 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 		DefaultType:    body.DefaultType,
 		FollowSymlinks: body.FollowSymlinks,
 		DryRun:         body.DryRun,
+		ProbeMedia:     body.ProbeMedia,
 		Logger:         a.log,
 		Progress:       progress,
 	})
@@ -2290,6 +2361,256 @@ type tmdbRefreshJob struct {
 	Progress   tmdb.BatchResult  `json:"progress"`
 	Result     *tmdb.BatchResult `json:"result,omitempty"`
 	Error      string            `json:"error,omitempty"`
+}
+
+type mediaProbeRequest struct {
+	LibraryID int64 `json:"library_id"`
+	Max       int   `json:"max"`
+	Force     bool  `json:"force"`
+	Workers   int   `json:"workers"`
+}
+
+type mediaProbeProgress struct {
+	Total     int      `json:"total"`
+	Processed int      `json:"processed"`
+	Active    int      `json:"active"`
+	Updated   int      `json:"updated"`
+	Skipped   int      `json:"skipped"`
+	Failed    int      `json:"failed"`
+	Current   string   `json:"current,omitempty"`
+	Errors    []string `json:"errors,omitempty"`
+}
+
+type mediaProbeJob struct {
+	ID         string             `json:"id"`
+	Status     string             `json:"status"`
+	StartedAt  time.Time          `json:"started_at"`
+	FinishedAt time.Time          `json:"finished_at,omitempty"`
+	Progress   mediaProbeProgress `json:"progress"`
+	Error      string             `json:"error,omitempty"`
+}
+
+type mediaProbeItem struct {
+	ID   int64
+	Path string
+}
+
+// MediaProbeStart starts an async ffprobe job for imported local media.
+func (a *Admin) MediaProbeStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body mediaProbeRequest
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	defer r.Body.Close()
+
+	id := randomScanID()
+	job := &mediaProbeJob{ID: id, Status: "running", StartedAt: time.Now()}
+	a.probeMu.Lock()
+	a.probeJobs[id] = job
+	a.probeMu.Unlock()
+
+	go func() {
+		progress, err := a.runMediaProbeJob(context.Background(), body, func(p mediaProbeProgress) {
+			a.updateMediaProbeJob(id, func(j *mediaProbeJob) {
+				j.Progress = p
+			})
+		})
+		a.updateMediaProbeJob(id, func(j *mediaProbeJob) {
+			j.FinishedAt = time.Now()
+			j.Progress = progress
+			if err != nil {
+				j.Status = "failed"
+				j.Error = err.Error()
+				return
+			}
+			j.Status = "done"
+		})
+	}()
+
+	WriteJSON(w, http.StatusAccepted, job)
+}
+
+// MediaProbeStatus returns one media probe job.
+func (a *Admin) MediaProbeStatus(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	a.probeMu.Lock()
+	job := a.cloneMediaProbeJob(a.probeJobs[id])
+	a.probeMu.Unlock()
+	if job == nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	WriteJSON(w, http.StatusOK, job)
+}
+
+func (a *Admin) runMediaProbeJob(ctx context.Context, body mediaProbeRequest, progressFn func(mediaProbeProgress)) (mediaProbeProgress, error) {
+	items, err := a.mediaProbeItems(ctx, body)
+	if err != nil {
+		return mediaProbeProgress{}, err
+	}
+	p := mediaProbeProgress{Total: len(items)}
+	if progressFn != nil {
+		progressFn(p)
+	}
+	if len(items) == 0 {
+		return p, nil
+	}
+
+	workers := body.Workers
+	if workers <= 0 {
+		workers = 8
+	}
+	if workers > 32 {
+		workers = 32
+	}
+	if workers > len(items) {
+		workers = len(items)
+	}
+
+	jobs := make(chan mediaProbeItem)
+	results := make(chan struct {
+		item mediaProbeItem
+		err  error
+	})
+	var wg sync.WaitGroup
+	var progressMu sync.Mutex
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				progressMu.Lock()
+				p.Active++
+				p.Current = item.Path
+				if progressFn != nil {
+					progressFn(p)
+				}
+				progressMu.Unlock()
+				err := a.probeOneMedia(ctx, item)
+				results <- struct {
+					item mediaProbeItem
+					err  error
+				}{item: item, err: err}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, item := range items {
+			if ctx.Err() != nil {
+				return
+			}
+			jobs <- item
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for res := range results {
+		progressMu.Lock()
+		if p.Active > 0 {
+			p.Active--
+		}
+		p.Processed++
+		p.Current = res.item.Path
+		if res.err != nil {
+			p.Failed++
+			if len(p.Errors) < 20 {
+				p.Errors = append(p.Errors, fmt.Sprintf("%s: %v", res.item.Path, res.err))
+			}
+		} else {
+			p.Updated++
+		}
+		if progressFn != nil {
+			progressFn(p)
+		}
+		progressMu.Unlock()
+	}
+	if err := ctx.Err(); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func (a *Admin) mediaProbeItems(ctx context.Context, body mediaProbeRequest) ([]mediaProbeItem, error) {
+	where := []string{"vm.deleted_at IS NULL", "COALESCE(vm.path_url, '') <> ''"}
+	args := []any{}
+	if body.LibraryID > 0 {
+		where = append(where, "vl.video_library_id = ?")
+		args = append(args, body.LibraryID)
+	}
+	if !body.Force {
+		where = append(where, "(vm.file_matadata IS NULL OR vm.file_second IS NULL OR vm.file_second = 0 OR COALESCE(vm.file_container, '') = '')")
+	}
+	limitSQL := ""
+	if body.Max > 0 {
+		limitSQL = " LIMIT ?"
+		args = append(args, body.Max)
+	}
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT vm.id, vm.path_url
+		FROM video_media vm
+		JOIN video_list vl ON vl.id = vm.video_list_id
+		WHERE `+strings.Join(where, " AND ")+`
+		ORDER BY vm.id ASC`+limitSQL, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []mediaProbeItem{}
+	for rows.Next() {
+		var item mediaProbeItem
+		if err := rows.Scan(&item.ID, &item.Path); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (a *Admin) probeOneMedia(ctx context.Context, item mediaProbeItem) error {
+	probe, err := importer.ProbeLocalMedia(ctx, item.Path)
+	if err != nil {
+		return err
+	}
+	var fileSize sql.NullInt64
+	if info, err := os.Stat(item.Path); err == nil && info.Size() > 0 {
+		fileSize = sql.NullInt64{Valid: true, Int64: info.Size()}
+	} else if probe.Size > 0 {
+		fileSize = sql.NullInt64{Valid: true, Int64: probe.Size}
+	}
+	_, err = a.db.ExecContext(ctx, `
+		UPDATE video_media
+		SET file_size = COALESCE(?, file_size),
+		    file_second = ?, file_matadata = ?, file_container = ?, updated_at = NOW()
+		WHERE id = ?
+	`, fileSize, sql.NullInt64{Valid: probe.Duration > 0, Int64: probe.Duration},
+		sql.NullString{Valid: len(probe.Metadata) > 0, String: string(probe.Metadata)},
+		nullableString(probe.Container), item.ID)
+	return err
+}
+
+func (a *Admin) updateMediaProbeJob(id string, fn func(*mediaProbeJob)) {
+	a.probeMu.Lock()
+	defer a.probeMu.Unlock()
+	if job := a.probeJobs[id]; job != nil {
+		fn(job)
+	}
+}
+
+func (a *Admin) cloneMediaProbeJob(job *mediaProbeJob) *mediaProbeJob {
+	if job == nil {
+		return nil
+	}
+	cp := *job
+	cp.Progress.Errors = append([]string(nil), job.Progress.Errors...)
+	return &cp
 }
 
 // TMDBRefreshAll scans all items missing metadata and refreshes each.

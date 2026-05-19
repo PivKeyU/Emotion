@@ -12,6 +12,10 @@ const (
 	keyToken
 	keyIsAdmin
 	keyIsAPIKey
+	keyClient
+	keyDeviceName
+	keyDeviceID
+	keyRemoteAddr
 )
 
 // WithAuth stores authenticated user context on the request.
@@ -20,6 +24,16 @@ func WithAuth(ctx context.Context, userID int64, token string, isAdmin, isAPIKey
 	ctx = context.WithValue(ctx, keyToken, token)
 	ctx = context.WithValue(ctx, keyIsAdmin, isAdmin)
 	ctx = context.WithValue(ctx, keyIsAPIKey, isAPIKey)
+	return ctx
+}
+
+// WithDevice attaches the caller's device descriptors for downstream handlers
+// that record session activity (sessions.go, playback_activity).
+func WithDevice(ctx context.Context, client, deviceName, deviceID, remoteAddr string) context.Context {
+	ctx = context.WithValue(ctx, keyClient, client)
+	ctx = context.WithValue(ctx, keyDeviceName, deviceName)
+	ctx = context.WithValue(ctx, keyDeviceID, deviceID)
+	ctx = context.WithValue(ctx, keyRemoteAddr, remoteAddr)
 	return ctx
 }
 
@@ -48,5 +62,29 @@ func IsAdmin(ctx context.Context) bool {
 // IsAPIKey reports whether the caller used the admin API key.
 func IsAPIKey(ctx context.Context) bool {
 	v, _ := ctx.Value(keyIsAPIKey).(bool)
+	return v
+}
+
+// Client returns the X-Emby-Client value associated with this token.
+func Client(ctx context.Context) string {
+	v, _ := ctx.Value(keyClient).(string)
+	return v
+}
+
+// DeviceName returns the X-Emby-Device-Name associated with this token.
+func DeviceName(ctx context.Context) string {
+	v, _ := ctx.Value(keyDeviceName).(string)
+	return v
+}
+
+// DeviceID returns the X-Emby-Device-Id associated with this token.
+func DeviceID(ctx context.Context) string {
+	v, _ := ctx.Value(keyDeviceID).(string)
+	return v
+}
+
+// RemoteAddr returns the caller's IP, with X-Forwarded-For honored upstream.
+func RemoteAddr(ctx context.Context) string {
+	v, _ := ctx.Value(keyRemoteAddr).(string)
 	return v
 }

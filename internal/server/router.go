@@ -31,9 +31,15 @@ func NewRouter(deps *Dependencies) http.Handler {
 		http.Redirect(w, req, "/admin/ui", http.StatusTemporaryRedirect)
 	})
 
-	// emby paths are accepted both with and without the "/emby" prefix so native clients
-	// and direct integrations both work (real Emby accepts both too).
-	for _, prefix := range []string{"/emby", ""} {
+	r.Get("/web", dash.WebStub)
+	r.Get("/web/", dash.WebStub)
+	r.Get("/web/index.html", dash.WebStub)
+
+	// Emby paths are accepted both with and without the "/emby" prefix so native
+	// clients and direct integrations both work. "/emby/emby" is tolerated for
+	// MoviePilot setups where the base URL already includes /emby while MP also
+	// appends emby/ for several endpoints.
+	for _, prefix := range []string{"/emby/emby", "/emby", ""} {
 		prefix := prefix
 
 		// --- public endpoints, no auth ---
@@ -66,6 +72,7 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	base := handlers.NewBase()
 	disp := handlers.NewDisplayPreferences()
 	mgmt := handlers.NewManagement(deps.DB, deps.Config, deps.Logger)
+	subs := handlers.NewSubscriptions(deps.DB, deps.Logger)
 
 	// System
 	r.Get(prefix+"/System/Info", sys.Info)
@@ -103,8 +110,14 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	r.Post(prefix+"/Users/{userId}/PlayedItems/{itemId}", userH.Played)
 	r.Delete(prefix+"/Users/{userId}/PlayedItems/{itemId}", userH.Played)
 
+	// Series subscriptions (追更)
+	r.Post(prefix+"/Users/{userId}/SubscribedSeries/{itemId}", subs.Subscribe)
+	r.Delete(prefix+"/Users/{userId}/SubscribedSeries/{itemId}", subs.Unsubscribe)
+	r.Get(prefix+"/Users/{userId}/SubscribedSeries", subs.List)
+
 	// Library
 	r.Get(prefix+"/Library/MediaFolders", lib.MediaFolders)
+	r.Get(prefix+"/Library/VirtualFolders/Query", lib.VirtualFoldersQuery)
 	r.Get(prefix+"/Library/VirtualFolders", lib.VirtualFolders)
 	r.Get(prefix+"/Library/SelectableMediaFolders", lib.SelectableMediaFolders)
 	r.Post(prefix+"/Library/Refresh", admin.EmbyLibraryRefresh)
@@ -158,9 +171,12 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Get("/admin/files", admin.FilesBrowse)
 		r.Get("/admin/media", admin.AdminMediaList)
 		r.Get("/admin/media/stats", admin.AdminMediaStats)
+		r.Post("/admin/media/probe/start", admin.MediaProbeStart)
+		r.Get("/admin/media/probe/{id}", admin.MediaProbeStatus)
 		r.Patch("/admin/media/{id}", admin.AdminMediaUpdate)
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Get("/admin/logs", admin.Logs)
+		r.Patch("/admin/users/{userId}", mgmt.AdminUserUpdate)
 		r.Get("/admin/api-keys", admin.APIKeysList)
 		r.Post("/admin/api-keys", admin.APIKeyCreate)
 		r.Delete("/admin/api-keys/{id}", admin.APIKeyRevoke)
@@ -178,5 +194,9 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Post("/admin/tmdb/refresh-all", admin.TMDBRefreshAll)
 		r.Post("/admin/tmdb/refresh-all/start", admin.TMDBRefreshAllStart)
 		r.Get("/admin/tmdb/refresh-all/{id}", admin.TMDBRefreshAllStatus)
+
+		// Series subscription events (bot polling)
+		r.Get("/admin/series-events", subs.EventsPending)
+		r.Post("/admin/series-events/ack", subs.EventsAck)
 	}
 }

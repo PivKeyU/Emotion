@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/PivKeyU/Emotion/internal/auth"
 	"github.com/PivKeyU/Emotion/internal/config"
 	"github.com/PivKeyU/Emotion/internal/db"
+	"github.com/PivKeyU/Emotion/internal/emby"
 	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
@@ -55,7 +57,7 @@ func (m *Management) UsersList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := m.db.QueryContext(r.Context(),
-		"SELECT id, username, is_can_down, is_admin, is_disable FROM app_user WHERE deleted_at IS NULL ORDER BY id ASC")
+		"SELECT id, username, is_can_down, is_admin, is_disable, folders FROM app_user WHERE deleted_at IS NULL ORDER BY id ASC")
 	if err != nil {
 		m.log.Error("users list query failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -70,12 +72,15 @@ func (m *Management) UsersList(w http.ResponseWriter, r *http.Request) {
 			isCanDown db.NullBool
 			isAdmin   db.NullBool
 			isDisable db.NullBool
+			folders   db.NullString
 		)
-		if err := rows.Scan(&id, &username, &isCanDown, &isAdmin, &isDisable); err != nil {
+		if err := rows.Scan(&id, &username, &isCanDown, &isAdmin, &isDisable, &folders); err != nil {
 			continue
 		}
-		out = append(out, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool))
+		enableAll, enabled := userFolderPolicy(folders)
+		out = append(out, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled))
 	}
+	m.ensureManagementAdminUser(r, &out, "")
 	WriteJSON(w, http.StatusOK, out)
 }
 
@@ -99,11 +104,25 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 		where += " AND username LIKE ?"
 		args = append(args, prefix+"%")
 	}
+	total := m.countUsers(r, where, args...)
+	startIndex := parseIntQuery(q.Get("startindex"), 0)
+	limit := parseIntQuery(q.Get("limit"), 0)
 
-	rows, err := m.db.QueryContext(r.Context(),
-		"SELECT id, username, is_can_down, is_admin, is_disable FROM app_user WHERE "+where+" ORDER BY id ASC",
-		args...,
-	)
+	query := "SELECT id, username, is_can_down, is_admin, is_disable, folders FROM app_user WHERE " + where + " ORDER BY id ASC"
+	queryArgs := append([]any{}, args...)
+	if limit > 0 {
+		query += " LIMIT ?"
+		queryArgs = append(queryArgs, limit)
+	}
+	if startIndex > 0 {
+		if limit <= 0 {
+			query += " LIMIT ALL"
+		}
+		query += " OFFSET ?"
+		queryArgs = append(queryArgs, startIndex)
+	}
+
+	rows, err := m.db.QueryContext(r.Context(), query, queryArgs...)
 	if err != nil {
 		m.log.Error("users query failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -118,13 +137,22 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 			isCanDown db.NullBool
 			isAdmin   db.NullBool
 			isDisable db.NullBool
+			folders   db.NullString
 		)
-		if err := rows.Scan(&id, &username, &isCanDown, &isAdmin, &isDisable); err != nil {
+		if err := rows.Scan(&id, &username, &isCanDown, &isAdmin, &isDisable, &folders); err != nil {
 			continue
 		}
-		items = append(items, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool))
+		enableAll, enabled := userFolderPolicy(folders)
+		items = append(items, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled))
 	}
-	WriteJSON(w, http.StatusOK, ItemResponse(items, int64(len(items))))
+	addedPseudo := m.ensureManagementAdminUser(r, &items, prefix)
+	if addedPseudo {
+		total++
+	}
+	if total == 0 && prefix == "" && len(items) > 0 {
+		total = int64(len(items))
+	}
+	WriteJSON(w, http.StatusOK, ItemResponse(items, total))
 }
 
 // userCreateBody is the POST body of /Users/New.
@@ -162,9 +190,10 @@ func (m *Management) UserNew(w http.ResponseWriter, r *http.Request) {
 		hashed = h
 	}
 
+	isAdmin := m.activeUserCount(r) == 0
 	res, err := m.db.ExecContext(r.Context(),
-		"INSERT INTO app_user (username, password, is_admin, is_disable) VALUES (?, ?, ?, ?)",
-		name, hashed, false, false,
+		"INSERT INTO app_user (username, password, folders, is_can_down, is_admin, is_disable) VALUES (?, ?, ?, ?, ?, ?)",
+		name, hashed, nil, true, isAdmin, false,
 	)
 	if err != nil {
 		m.log.Error("user create failed", "err", err)
@@ -172,7 +201,7 @@ func (m *Management) UserNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	WriteJSON(w, http.StatusOK, userToEmby(m.cfg, id, name, false, false, false))
+	WriteJSON(w, http.StatusOK, userToEmby(m.cfg, id, name, true, isAdmin, false, true, idsToFolderStrings(m.allLibraryIDs(r))))
 }
 
 // UserDelete soft-deletes a user (DELETE /Users/{id}).
@@ -359,6 +388,77 @@ func (m *Management) UserPolicy(w http.ResponseWriter, r *http.Request) {
 	WriteStatus(w, http.StatusNoContent)
 }
 
+type adminUserUpdateBody struct {
+	Name                     string  `json:"name"`
+	Password                 *string `json:"password"`
+	IsAdministrator          bool    `json:"is_administrator"`
+	IsDisabled               bool    `json:"is_disabled"`
+	EnableContentDownloading bool    `json:"enable_content_downloading"`
+	EnableAllFolders         bool    `json:"enable_all_folders"`
+	EnabledFolders           []int64 `json:"enabled_folders"`
+}
+
+// AdminUserUpdate updates a local user's editable dashboard fields.
+func (m *Management) AdminUserUpdate(w http.ResponseWriter, r *http.Request) {
+	if !m.requireAdmin(w, r) {
+		return
+	}
+	userID, ok := resolveUserID(chi.URLParam(r, "userId"))
+	if !ok {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	var body adminUserUpdateBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		WriteText(w, http.StatusBadRequest, "name required")
+		return
+	}
+	visibleIDs := body.EnabledFolders
+	var foldersValue any
+	if body.EnableAllFolders {
+		foldersValue = nil
+	} else {
+		foldersJSON, _ := json.Marshal(visibleIDs)
+		foldersValue = foldersJSON
+	}
+
+	args := []any{name, body.IsAdministrator, body.IsDisabled, body.EnableContentDownloading, foldersValue}
+	sets := []string{"username = ?", "is_admin = ?", "is_disable = ?", "is_can_down = ?", "folders = ?", "updated_at = NOW()"}
+	if body.Password != nil {
+		hashed := ""
+		if *body.Password != "" {
+			h, err := auth.HashPassword(*body.Password)
+			if err != nil {
+				WriteStatus(w, http.StatusInternalServerError)
+				return
+			}
+			hashed = h
+		}
+		sets = append(sets, "password = ?")
+		args = append(args, hashed)
+	}
+	args = append(args, userID)
+	res, err := m.db.ExecContext(r.Context(),
+		"UPDATE app_user SET "+strings.Join(sets, ", ")+" WHERE id = ? AND deleted_at IS NULL", args...)
+	if err != nil {
+		m.log.Error("admin user update failed", "err", err)
+		WriteText(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	_, _ = m.db.ExecContext(r.Context(), "DELETE FROM token WHERE user_id = ?", userID)
+	WriteStatus(w, http.StatusNoContent)
+}
+
 // SessionMessage accepts a Sakura-style "show message" POST. We have no websocket
 // to push to, but we succeed silently so the bot's UX doesn't break.
 func (m *Management) SessionMessage(w http.ResponseWriter, r *http.Request) {
@@ -412,7 +512,9 @@ type customQueryBody struct {
 	ReplaceUserId     bool   `json:"ReplaceUserId"`
 }
 
-// UsageStatsQuery returns aggregated watch time for users / a user.
+// UsageStatsQuery handles the pivkeyu_emby bot's custom SQL queries against
+// playback_activity. We detect known patterns and translate them into safe
+// parameterized PostgreSQL queries. Arbitrary SQL is never executed.
 func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 	if !m.requireAdmin(w, r) {
 		return
@@ -422,61 +524,260 @@ func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	sqlStr := strings.ToUpper(body.CustomQueryString)
-
-	var results []map[string]any
 	ctx := r.Context()
 
-	if strings.Contains(sqlStr, "GROUP BY USERID") && strings.Contains(sqlStr, "WATCHTIME") && !strings.Contains(sqlStr, "WHERE USERID") {
-		// Global ranking: top users by watch time.
+	var (
+		columns []any
+		results [][]any
+	)
+
+	startTime, endTime := extractDateRange(body.CustomQueryString)
+
+	switch {
+	case strings.Contains(sqlStr, "COUNT(DISTINCT") && strings.Contains(sqlStr, "GROUP BY USERID"):
+		// Pattern 8: per-user device count + IP count, paginated.
+		columns = []any{"UserId", "device_count", "ip_count"}
+		limit, offset := extractLimitOffset(sqlStr)
+		if limit <= 0 {
+			limit = 20
+		}
 		rows, err := m.db.QueryContext(ctx, `
-			SELECT user_id, SUM(play_duration - pause_duration) AS WatchTime
+			SELECT user_id,
+			       COUNT(DISTINCT device_name || '|' || client) AS device_count,
+			       COUNT(DISTINCT remote_address) AS ip_count
 			FROM playback_activity
-			WHERE date_created >= now() - interval '7 days'
 			GROUP BY user_id
-			ORDER BY WatchTime DESC
-		`)
+			ORDER BY device_count DESC
+			LIMIT ? OFFSET ?
+		`, limit+1, offset)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
-				var (
-					userID    string
-					watchTime int64
-				)
-				if err := rows.Scan(&userID, &watchTime); err == nil {
-					results = append(results, map[string]any{
-						"UserId":    userID,
-						"WatchTime": watchTime,
-					})
+				var uid string
+				var dc, ic int64
+				if rows.Scan(&uid, &dc, &ic) == nil {
+					results = append(results, []any{uid, dc, ic})
 				}
 			}
 		}
-	} else if strings.Contains(sqlStr, "WHERE USERID") {
-		// Per-user aggregate.
-		// Extract the user id from the SQL string (best-effort, quoted).
+
+	case strings.Contains(sqlStr, "DEVICENAME") && strings.Contains(sqlStr, "CLIENTNAME") && strings.Contains(sqlStr, "REMOTEADDRESS") && strings.Contains(sqlStr, "WHERE USERID"):
+		// Pattern 4: user's distinct devices/IPs.
+		columns = []any{"DeviceName", "ClientName", "RemoteAddress"}
 		userID := extractSingleQuoted(body.CustomQueryString, "UserId")
 		if userID != "" {
-			var (
-				lastLogin sql.NullTime
-				watchTime sql.NullFloat64
-			)
-			_ = m.db.QueryRowContext(ctx, `
-				SELECT MAX(date_created), SUM(play_duration - pause_duration) / 60
-				FROM playback_activity
-				WHERE user_id = ? AND date_created >= now() - interval '7 days'
-			`, userID).Scan(&lastLogin, &watchTime)
-			row := map[string]any{}
+			rows, err := m.db.QueryContext(ctx, `
+				SELECT DISTINCT device_name, client, remote_address
+				FROM playback_activity WHERE user_id = ?
+			`, userID)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var dn, cn, ra string
+					if rows.Scan(&dn, &cn, &ra) == nil {
+						results = append(results, []any{dn, cn, ra})
+					}
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "REMOTEADDRESS") && strings.Contains(sqlStr, "GROUP BY USERID"):
+		// Pattern 5: reverse lookup users by IP.
+		columns = []any{"UserId", "DeviceName", "ClientName", "RemoteAddress", "LastActivity", "ActivityCount"}
+		ip := extractSingleQuoted(body.CustomQueryString, "RemoteAddress")
+		if ip != "" {
+			q := `SELECT user_id, device_name, client, remote_address, MAX(date_created), COUNT(*)
+				FROM playback_activity WHERE remote_address = ?`
+			args := []any{ip}
+			if startTime != "" {
+				q += " AND date_created >= ? AND date_created <= ?"
+				args = append(args, startTime, endTime)
+			}
+			q += " GROUP BY user_id, device_name, client, remote_address ORDER BY MAX(date_created) DESC"
+			rows, err := m.db.QueryContext(ctx, q, args...)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var uid, dn, cn, ra string
+					var la sql.NullTime
+					var cnt int64
+					if rows.Scan(&uid, &dn, &cn, &ra, &la, &cnt) == nil {
+						laStr := ""
+						if la.Valid {
+							laStr = la.Time.Format("2006-01-02 15:04:05")
+						}
+						results = append(results, []any{uid, dn, cn, ra, laStr, cnt})
+					}
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "DEVICENAME LIKE"):
+		// Pattern 6: reverse lookup users by device substring.
+		columns = []any{"UserId", "DeviceName", "ClientName", "RemoteAddress", "LastActivity", "ActivityCount"}
+		pattern := extractLikePattern(body.CustomQueryString, "DeviceName")
+		if pattern != "" {
+			q := `SELECT user_id, device_name, client, remote_address, MAX(date_created), COUNT(*)
+				FROM playback_activity WHERE device_name ILIKE ?`
+			args := []any{"%" + pattern + "%"}
+			if startTime != "" {
+				q += " AND date_created >= ? AND date_created <= ?"
+				args = append(args, startTime, endTime)
+			}
+			q += " GROUP BY user_id, device_name, client, remote_address ORDER BY MAX(date_created) DESC"
+			rows, err := m.db.QueryContext(ctx, q, args...)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var uid, dn, cn, ra string
+					var la sql.NullTime
+					var cnt int64
+					if rows.Scan(&uid, &dn, &cn, &ra, &la, &cnt) == nil {
+						laStr := ""
+						if la.Valid {
+							laStr = la.Time.Format("2006-01-02 15:04:05")
+						}
+						results = append(results, []any{uid, dn, cn, ra, laStr, cnt})
+					}
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "CLIENTNAME LIKE"):
+		// Pattern 7: reverse lookup users by client substring.
+		columns = []any{"UserId", "DeviceName", "ClientName", "RemoteAddress", "LastActivity", "ActivityCount"}
+		pattern := extractLikePattern(body.CustomQueryString, "ClientName")
+		if pattern != "" {
+			q := `SELECT user_id, device_name, client, remote_address, MAX(date_created), COUNT(*)
+				FROM playback_activity WHERE client ILIKE ?`
+			args := []any{"%" + pattern + "%"}
+			if startTime != "" {
+				q += " AND date_created >= ? AND date_created <= ?"
+				args = append(args, startTime, endTime)
+			}
+			q += " GROUP BY user_id, device_name, client, remote_address ORDER BY MAX(date_created) DESC"
+			rows, err := m.db.QueryContext(ctx, q, args...)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var uid, dn, cn, ra string
+					var la sql.NullTime
+					var cnt int64
+					if rows.Scan(&uid, &dn, &cn, &ra, &la, &cnt) == nil {
+						laStr := ""
+						if la.Valid {
+							laStr = la.Time.Format("2006-01-02 15:04:05")
+						}
+						results = append(results, []any{uid, dn, cn, ra, laStr, cnt})
+					}
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "GROUP BY NAME") || strings.Contains(sqlStr, "GROUP BY ITEMNAME"):
+		// Pattern 3: top items by watch time, optionally filtered by ItemType and/or UserId.
+		columns = []any{"UserId", "ItemId", "ItemType", "name", "play_count", "total_duarion"}
+		itemType := extractSingleQuoted(body.CustomQueryString, "ItemType")
+		userID := extractSingleQuoted(body.CustomQueryString, "UserId")
+		limit := 10
+		if idx := strings.Index(sqlStr, "LIMIT"); idx >= 0 {
+			fmt.Sscanf(sqlStr[idx:], "LIMIT %d", &limit)
+		}
+		q := `SELECT user_id, item_id, item_type, item_name, COUNT(*) AS play_count,
+		      SUM(play_duration - pause_duration) AS total_duration
+		      FROM playback_activity WHERE 1=1`
+		args := []any{}
+		if itemType != "" {
+			q += " AND item_type = ?"
+			args = append(args, itemType)
+		}
+		if userID != "" {
+			q += " AND user_id = ?"
+			args = append(args, userID)
+		}
+		if startTime != "" {
+			q += " AND date_created >= ? AND date_created <= ?"
+			args = append(args, startTime, endTime)
+		}
+		q += " GROUP BY user_id, item_id, item_type, item_name ORDER BY total_duration DESC LIMIT ?"
+		args = append(args, limit)
+		rows, err := m.db.QueryContext(ctx, q, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var uid, iid, itype string
+				var iname sql.NullString
+				var pc, td int64
+				if rows.Scan(&uid, &iid, &itype, &iname, &pc, &td) == nil {
+					results = append(results, []any{uid, iid, itype, iname.String, pc, td})
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "GROUP BY USERID") && strings.Contains(sqlStr, "WATCHTIME") && !strings.Contains(sqlStr, "WHERE USERID"):
+		// Pattern 1 (existing): Global ranking — top users by watch time.
+		columns = []any{"UserId", "WatchTime"}
+		q := `SELECT user_id, SUM(play_duration - pause_duration) AS WatchTime
+			FROM playback_activity WHERE 1=1`
+		args := []any{}
+		if startTime != "" {
+			q += " AND date_created >= ? AND date_created < ?"
+			args = append(args, startTime, endTime)
+		} else {
+			q += " AND date_created >= now() - interval '7 days'"
+		}
+		q += " GROUP BY user_id ORDER BY WatchTime DESC"
+		rows, err := m.db.QueryContext(ctx, q, args...)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var uid string
+				var wt int64
+				if rows.Scan(&uid, &wt) == nil {
+					results = append(results, []any{uid, wt})
+				}
+			}
+		}
+
+	case strings.Contains(sqlStr, "WHERE USERID"):
+		// Pattern 2 (existing): Per-user aggregate.
+		columns = []any{"LastLogin", "WatchTime"}
+		userID := extractSingleQuoted(body.CustomQueryString, "UserId")
+		if userID != "" {
+			q := `SELECT MAX(date_created), SUM(play_duration - pause_duration) / 60
+				FROM playback_activity WHERE user_id = ?`
+			args := []any{userID}
+			if startTime != "" {
+				q += " AND date_created >= ? AND date_created < ?"
+				args = append(args, startTime, endTime)
+			} else {
+				q += " AND date_created >= now() - interval '7 days'"
+			}
+			var lastLogin sql.NullTime
+			var watchTime sql.NullFloat64
+			_ = m.db.QueryRowContext(ctx, q, args...).Scan(&lastLogin, &watchTime)
+			row := []any{"", float64(0)}
 			if lastLogin.Valid {
-				row["LastLogin"] = lastLogin.Time.Format("2006-01-02 15:04:05")
+				row[0] = lastLogin.Time.Format("2006-01-02 15:04:05")
 			}
 			if watchTime.Valid {
-				row["WatchTime"] = watchTime.Float64
+				row[1] = watchTime.Float64
 			}
 			results = append(results, row)
 		}
+
+	default:
+		columns = []any{}
 	}
 
+	if columns == nil {
+		columns = []any{}
+	}
+	if results == nil {
+		results = [][]any{}
+	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"colums":  []any{"UserId", "WatchTime", "LastLogin"},
+		"colums":  columns,
 		"results": results,
 	})
 }
@@ -485,7 +786,7 @@ func (m *Management) UsageStatsQuery(w http.ResponseWriter, r *http.Request) {
 
 // userToEmby builds the minimal Emby User shape the management API returns for
 // list/query/create calls. Full shape (/Users/{id}) is produced by Transform.User.
-func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmin, isDisable bool) map[string]any {
+func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmin, isDisable, enableAllFolders bool, enabledFolders []string) map[string]any {
 	embyID := strconv.FormatInt(id, 10)
 	return map[string]any{
 		"Name":                  username,
@@ -498,13 +799,95 @@ func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmi
 			"IsAdministrator":          isAdmin,
 			"IsDisabled":               isDisable,
 			"EnableContentDownloading": isCanDown,
-			"EnableAllFolders":         true,
-			"EnabledFolders":           []any{},
+			"EnableAllFolders":         enableAllFolders,
+			"EnabledFolders":           enabledFolders,
 			"SimultaneousStreamLimit":  0,
 			"EnableMediaPlayback":      true,
 			"BlockedMediaFolders":      []any{},
 		},
 	}
+}
+
+func (m *Management) allLibraryIDs(r *http.Request) []int64 {
+	rows, err := m.db.QueryContext(r.Context(), "SELECT id FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func (m *Management) activeUserCount(r *http.Request) int64 {
+	var count int64
+	_ = m.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM app_user WHERE deleted_at IS NULL").Scan(&count)
+	return count
+}
+
+func (m *Management) countUsers(r *http.Request, where string, args ...any) int64 {
+	var count int64
+	_ = m.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM app_user WHERE "+where, args...).Scan(&count)
+	return count
+}
+
+func (m *Management) ensureManagementAdminUser(r *http.Request, users *[]any, prefix string) bool {
+	if prefix != "" && !strings.HasPrefix(strings.ToLower("admin"), strings.ToLower(prefix)) {
+		return false
+	}
+	hasAdmin := false
+	for _, raw := range *users {
+		user, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := user["Name"].(string)
+		if strings.EqualFold(name, "admin") {
+			hasAdmin = true
+			break
+		}
+		policy, ok := user["Policy"].(map[string]any)
+		if ok && policy["IsAdministrator"] == true {
+			name, _ := user["Name"].(string)
+			if strings.EqualFold(name, "admin") {
+				hasAdmin = true
+				break
+			}
+		}
+	}
+	if hasAdmin {
+		return false
+	}
+	*users = append([]any{m.pseudoAdminUser(r)}, (*users)...)
+	return true
+}
+
+func (m *Management) pseudoAdminUser(r *http.Request) map[string]any {
+	return userToEmby(m.cfg, 0, "admin", true, true, false, true, idsToFolderStrings(m.allLibraryIDs(r)))
+}
+
+func idsToFolderStrings(ids []int64) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, emby.ItemID(emby.ItemIDTypeVideoLibrary, id))
+	}
+	return out
+}
+
+func userFolderPolicy(folders db.NullString) (bool, []string) {
+	if !folders.Valid || strings.TrimSpace(folders.String) == "" {
+		return true, []string{}
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(folders.String), &ids); err != nil {
+		return true, []string{}
+	}
+	return false, idsToFolderStrings(ids)
 }
 
 // resolveUserID accepts either a numeric id or a hex id string.
@@ -546,7 +929,7 @@ func stringifyAny(in []any) []string {
 }
 
 // extractSingleQuoted pulls a value out of "Field = 'value'" style SQL clauses.
-// Only used for the two hard-coded Sakura queries.
+// Only used for the hard-coded pivkeyu queries.
 func extractSingleQuoted(s, field string) string {
 	up := strings.ToUpper(s)
 	fieldUp := strings.ToUpper(field)
@@ -563,4 +946,87 @@ func extractSingleQuoted(s, field string) string {
 		return ""
 	}
 	return s[start : start+end]
+}
+
+// extractLikePattern pulls the value from "Field LIKE '%value%'" clauses.
+func extractLikePattern(s, field string) string {
+	up := strings.ToUpper(s)
+	fieldUp := strings.ToUpper(field)
+	idx := strings.Index(up, fieldUp+" LIKE ")
+	if idx < 0 {
+		return ""
+	}
+	rest := s[idx+len(field)+6:]
+	qStart := strings.Index(rest, "'")
+	if qStart < 0 {
+		return ""
+	}
+	rest = rest[qStart+1:]
+	qEnd := strings.Index(rest, "'")
+	if qEnd < 0 {
+		return ""
+	}
+	val := rest[:qEnd]
+	val = strings.TrimPrefix(val, "%")
+	val = strings.TrimSuffix(val, "%")
+	return val
+}
+
+// extractDateRange pulls DateCreated >= '...' AND DateCreated <= '...' timestamps.
+func extractDateRange(s string) (string, string) {
+	up := strings.ToUpper(s)
+	startIdx := strings.Index(up, "DATECREATED >= '")
+	if startIdx < 0 {
+		startIdx = strings.Index(up, "DATECREATED >='")
+	}
+	if startIdx < 0 {
+		return "", ""
+	}
+	startVal := extractSingleQuoted(s[startIdx:], "DateCreated >=")
+	if startVal == "" {
+		startVal = extractSingleQuoted(s[startIdx:], "DateCreated>=")
+	}
+	if startVal == "" {
+		afterQuote := strings.Index(s[startIdx:], "'")
+		if afterQuote >= 0 {
+			rest := s[startIdx+afterQuote+1:]
+			end := strings.Index(rest, "'")
+			if end > 0 {
+				startVal = rest[:end]
+			}
+		}
+	}
+
+	endIdx := strings.Index(up, "DATECREATED <= '")
+	if endIdx < 0 {
+		endIdx = strings.Index(up, "DATECREATED <='")
+	}
+	if endIdx < 0 {
+		endIdx = strings.Index(up, "DATECREATED < '")
+	}
+	endVal := ""
+	if endIdx >= 0 {
+		afterQuote := strings.Index(s[endIdx:], "'")
+		if afterQuote >= 0 {
+			rest := s[endIdx+afterQuote+1:]
+			end := strings.Index(rest, "'")
+			if end > 0 {
+				endVal = rest[:end]
+			}
+		}
+	}
+	return startVal, endVal
+}
+
+// extractLimitOffset pulls LIMIT N OFFSET M from the SQL string.
+func extractLimitOffset(s string) (int, int) {
+	up := strings.ToUpper(s)
+	limit, offset := 0, 0
+	if idx := strings.Index(up, "LIMIT "); idx >= 0 {
+		fmt.Sscanf(up[idx:], "LIMIT %d", &limit)
+	}
+	if idx := strings.Index(up, "OFFSET "); idx >= 0 {
+		fmt.Sscanf(up[idx:], "OFFSET %d", &offset)
+	}
+	return limit, offset
 }

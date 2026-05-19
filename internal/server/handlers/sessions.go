@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PivKeyU/Emotion/internal/cache"
@@ -15,35 +17,97 @@ import (
 	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 )
 
-// Sessions serves /Sessions/* endpoints. We report a single synthetic session
-// for the server (emby clients require at least one), and record playback
-// progress / stops from the client.
+// Sessions serves /Sessions/* endpoints. Live playback state is held in
+// memory and finalized into playback_activity on stop / janitor sweep.
 type Sessions struct {
 	db    *db.DB
 	cache cache.Cache
 	cfg   *config.Config
 	log   *slog.Logger
+
+	mu       sync.Mutex
+	live     map[string]*liveSession
+	stopOnce sync.Once
+	stop     chan struct{}
 }
 
-// NewSessions builds the handler.
+// liveSession is the in-memory record of one playing client.
+type liveSession struct {
+	UserID         int64
+	ItemID         string
+	ItemType       string
+	ItemName       string
+	Client         string
+	DeviceName     string
+	DeviceID       string
+	RemoteAddress  string
+	PlayMethod     string
+	PlaySessionID  string
+	StartedAt      time.Time
+	LastProgressAt time.Time
+	PausedAccum    time.Duration
+	PausedSince    time.Time
+	IsPaused       bool
+}
+
+// NewSessions builds the handler and starts the janitor goroutine.
 func NewSessions(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logger) *Sessions {
-	return &Sessions{db: database, cache: c, cfg: cfg, log: log}
+	s := &Sessions{
+		db:    database,
+		cache: c,
+		cfg:   cfg,
+		log:   log,
+		live:  map[string]*liveSession{},
+		stop:  make(chan struct{}),
+	}
+	go s.janitor()
+	return s
 }
 
-// List returns the current set of sessions.
-// emya returns a single stub session; real Emby would track each client. We follow emya.
+// Close stops the janitor goroutine. Safe to call multiple times.
+func (s *Sessions) Close() {
+	s.stopOnce.Do(func() { close(s.stop) })
+}
+
+func (s *Sessions) janitor() {
+	t := time.NewTicker(2 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-t.C:
+			s.sweep()
+		}
+	}
+}
+
+// sweep finalizes any live session whose last progress was over an hour ago.
+func (s *Sessions) sweep() {
+	cutoff := time.Now().Add(-1 * time.Hour)
+	var stale []*liveSession
+	s.mu.Lock()
+	for id, sess := range s.live {
+		if sess.LastProgressAt.Before(cutoff) {
+			stale = append(stale, sess)
+			delete(s.live, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, sess := range stale {
+		s.recordActivity(context.Background(), sess, time.Now())
+	}
+}
+
+// List returns the active live sessions, plus a synthetic server stub so
+// clients that always expect at least one entry don't break.
 func (s *Sessions) List(w http.ResponseWriter, r *http.Request) {
-	WriteJSON(w, http.StatusOK, []any{
+	out := []any{
 		map[string]any{
 			"PlayState": map[string]any{
-				"CanSeek":        false,
-				"IsPaused":       false,
-				"IsMuted":        false,
-				"RepeatMode":     "RepeatNone",
-				"SleepTimerMode": "None",
-				"SubtitleOffset": 0,
-				"Shuffle":        false,
-				"PlaybackRate":   1,
+				"CanSeek": false, "IsPaused": false, "IsMuted": false,
+				"RepeatMode": "RepeatNone", "SleepTimerMode": "None",
+				"SubtitleOffset": 0, "Shuffle": false, "PlaybackRate": 1,
 			},
 			"AdditionalUsers":       []any{},
 			"RemoteEndPoint":        "emotion",
@@ -65,12 +129,44 @@ func (s *Sessions) List(w http.ResponseWriter, r *http.Request) {
 			"SupportedCommands":     []any{},
 			"SupportsRemoteControl": false,
 		},
-	})
+	}
+	s.mu.Lock()
+	for _, sess := range s.live {
+		out = append(out, map[string]any{
+			"PlayState": map[string]any{
+				"CanSeek": true, "IsPaused": sess.IsPaused, "IsMuted": false,
+				"RepeatMode": "RepeatNone", "SleepTimerMode": "None",
+				"SubtitleOffset": 0, "Shuffle": false, "PlaybackRate": 1,
+				"PlayMethod": sess.PlayMethod,
+			},
+			"AdditionalUsers":       []any{},
+			"RemoteEndPoint":        sess.RemoteAddress,
+			"Protocol":              "HTTP/1.1",
+			"PlayableMediaTypes":    []any{"Video"},
+			"Id":                    sess.PlaySessionID,
+			"ServerId":              s.cfg.EmbyID,
+			"UserId":                itoa(sess.UserID),
+			"UserName":              "",
+			"Client":                sess.Client,
+			"LastActivityDate":      sess.LastProgressAt.UTC().Format(time.RFC3339),
+			"DeviceName":            sess.DeviceName,
+			"DeviceId":              sess.DeviceID,
+			"NowPlayingItem": map[string]any{
+				"Id":   sess.ItemID,
+				"Name": sess.ItemName,
+				"Type": sess.ItemType,
+			},
+			"ApplicationVersion":    s.cfg.EmbyVersion,
+			"SupportedCommands":     []any{},
+			"SupportsRemoteControl": false,
+		})
+	}
+	s.mu.Unlock()
+	WriteJSON(w, http.StatusOK, out)
 }
 
 // Capabilities handles /Sessions/Capabilities/Full which clients POST at startup.
 func (s *Sessions) Capabilities(w http.ResponseWriter, r *http.Request) {
-	// Discard body; we don't model per-session capabilities.
 	_, _ = io.Copy(io.Discard, r.Body)
 	defer r.Body.Close()
 	WriteStatus(w, http.StatusNoContent)
@@ -84,7 +180,6 @@ func (s *Sessions) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 // playingBody is a lenient decoder for all the progress/start/stop payloads.
-// emya lower-cases all body keys, so we do the same by normalizing in code.
 type playingBody struct {
 	ItemID        string `json:"itemid"`
 	MediaSourceID string `json:"mediasourceid"`
@@ -96,7 +191,6 @@ type playingBody struct {
 }
 
 // Playing records play / progress / stopped events.
-// Same endpoint handles all three because emya does the same.
 func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -105,10 +199,8 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Decode case-insensitively by lower-casing keys first.
 	var mixed map[string]any
 	if err := json.Unmarshal(raw, &mixed); err != nil {
-		// Some clients (e.g. Cinetry) may send a stringified JSON body.
 		_ = json.Unmarshal([]byte(strings.ToLower(string(raw))), &mixed)
 	}
 	lowered := map[string]any{}
@@ -120,29 +212,24 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 	var body playingBody
 	_ = json.Unmarshal(normalized, &body)
 
-	_, numericID, ok := emby.ParseItemID(body.ItemID)
+	kind, numericID, ok := emby.ParseItemID(body.ItemID)
 	if !ok {
 		WriteStatus(w, http.StatusUnprocessableEntity)
 		return
 	}
 
-	kind, _, _ := emby.ParseItemID(body.ItemID)
-
 	ctx := r.Context()
 	userID := ctxpkg.UserID(ctx)
 
-	// Find the media row by uuid (the prefix of MediaSourceId before "_").
 	mediaUUID := body.MediaSourceID
 	if idx := strings.Index(mediaUUID, "_"); idx > 0 {
 		mediaUUID = mediaUUID[:idx]
 	}
 	if mediaUUID == "" {
-		// Nothing to record at stream level, but still return 204 so clients don't retry.
 		WriteStatus(w, http.StatusNoContent)
 		return
 	}
 
-	// Look up media (cached).
 	var (
 		mediaID    int64
 		fileSecond db.NullInt64
@@ -171,9 +258,6 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build WHERE clause for the target record. Mirrors emya logic:
-	// user_id is always required; then add video_list_id OR video_episode_id
-	// depending on the Emby item kind.
 	wheres := []string{"user_id = ?"}
 	args := []any{userID}
 	switch kind {
@@ -198,5 +282,145 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 	fullArgs := append([]any{playSeconds, mediaID, isComplete}, args...)
 	_, _ = s.db.ExecContext(ctx, stmt, fullArgs...)
 
+	s.trackEvent(ctx, &body, kind, numericID, userID)
+
 	WriteStatus(w, http.StatusNoContent)
+}
+
+// trackEvent updates the in-memory session for this client and, on stop,
+// writes a row into playback_activity.
+func (s *Sessions) trackEvent(ctx context.Context, body *playingBody, kind string, numericID, userID int64) {
+	psid := body.PlaySessionID
+	if psid == "" {
+		psid = body.ItemID
+	}
+	now := time.Now()
+	event := strings.ToLower(strings.TrimSpace(body.EventName))
+	isStop := event == "playbackstopped" || event == "stopped" || event == "playbackstop"
+
+	s.mu.Lock()
+	sess, ok := s.live[psid]
+	if !ok {
+		sess = &liveSession{
+			UserID:         userID,
+			ItemID:         body.ItemID,
+			ItemType:       embyItemTypeFromKind(kind),
+			Client:         ctxpkg.Client(ctx),
+			DeviceName:     ctxpkg.DeviceName(ctx),
+			DeviceID:       ctxpkg.DeviceID(ctx),
+			RemoteAddress:  ctxpkg.RemoteAddr(ctx),
+			PlayMethod:     body.PlayMethod,
+			PlaySessionID:  psid,
+			StartedAt:      now,
+			LastProgressAt: now,
+		}
+		s.live[psid] = sess
+	}
+	if sess.PlayMethod == "" && body.PlayMethod != "" {
+		sess.PlayMethod = body.PlayMethod
+	}
+	if !sess.IsPaused && body.IsPaused {
+		sess.PausedSince = now
+	} else if sess.IsPaused && !body.IsPaused && !sess.PausedSince.IsZero() {
+		sess.PausedAccum += now.Sub(sess.PausedSince)
+		sess.PausedSince = time.Time{}
+	}
+	sess.IsPaused = body.IsPaused
+	sess.LastProgressAt = now
+
+	if isStop {
+		if sess.IsPaused && !sess.PausedSince.IsZero() {
+			sess.PausedAccum += now.Sub(sess.PausedSince)
+			sess.PausedSince = time.Time{}
+			sess.IsPaused = false
+		}
+		delete(s.live, psid)
+	}
+	finalize := isStop
+	captured := *sess
+	s.mu.Unlock()
+
+	if sess.ItemName == "" {
+		captured.ItemName = s.lookupItemName(ctx, kind, numericID)
+		s.mu.Lock()
+		if cur, ok := s.live[psid]; ok {
+			cur.ItemName = captured.ItemName
+		}
+		s.mu.Unlock()
+	}
+
+	if finalize {
+		s.recordActivity(ctx, &captured, now)
+	}
+}
+
+func (s *Sessions) lookupItemName(ctx context.Context, kind string, numericID int64) string {
+	var name string
+	switch kind {
+	case emby.ItemIDTypeVideoList:
+		_ = s.db.QueryRowContext(ctx,
+			"SELECT title FROM video_list WHERE id = ? LIMIT 1", numericID,
+		).Scan(&name)
+	case emby.ItemIDTypeVideoEpisode:
+		var seriesTitle, epTitle string
+		_ = s.db.QueryRowContext(ctx, `
+			SELECT vl.title, ve.title FROM video_episode ve
+			JOIN video_list vl ON vl.id = ve.video_list_id
+			WHERE ve.id = ? LIMIT 1`, numericID,
+		).Scan(&seriesTitle, &epTitle)
+		if seriesTitle != "" && epTitle != "" {
+			name = seriesTitle + " - " + epTitle
+		} else if seriesTitle != "" {
+			name = seriesTitle
+		} else {
+			name = epTitle
+		}
+	}
+	return name
+}
+
+func (s *Sessions) recordActivity(ctx context.Context, sess *liveSession, stoppedAt time.Time) {
+	playDur := int64(stoppedAt.Sub(sess.StartedAt).Seconds())
+	pauseDur := int64(sess.PausedAccum.Seconds())
+	if playDur < 0 {
+		playDur = 0
+	}
+	if pauseDur < 0 {
+		pauseDur = 0
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO playback_activity
+			(date_created, user_id, item_id, item_type, item_name, play_method,
+			 client, device_name, remote_address, play_duration, pause_duration)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		sess.StartedAt,
+		itoa(sess.UserID),
+		sess.ItemID,
+		sess.ItemType,
+		sess.ItemName,
+		sess.PlayMethod,
+		sess.Client,
+		sess.DeviceName,
+		sess.RemoteAddress,
+		playDur,
+		pauseDur,
+	)
+	if err != nil {
+		s.log.Warn("playback_activity insert failed", "category", "session", "err", err)
+	}
+}
+
+func embyItemTypeFromKind(kind string) string {
+	switch kind {
+	case emby.ItemIDTypeVideoList:
+		return "Movie"
+	case emby.ItemIDTypeVideoEpisode:
+		return "Episode"
+	case emby.ItemIDTypeVideoSeason:
+		return "Season"
+	case emby.ItemIDTypeVideoLibrary:
+		return "CollectionFolder"
+	}
+	return ""
 }

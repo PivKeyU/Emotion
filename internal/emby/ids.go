@@ -30,6 +30,9 @@ func ItemID(kind string, id int64) string {
 
 // ParseItemID extracts (type, id) from "vl-42". Returns false for anything else.
 func ParseItemID(value string) (string, int64, bool) {
+	if id, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && id > 0 {
+		return ItemIDTypeVideoLibrary, id, true
+	}
 	parts := strings.SplitN(value, "-", 2)
 	if len(parts) != 2 {
 		return "", 0, false

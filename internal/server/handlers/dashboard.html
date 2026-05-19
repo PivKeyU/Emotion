@@ -4,166 +4,153 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Emotion Admin</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #f3f7fb;
+  --bg: #fafaf7;
   --panel: #ffffff;
-  --panel2: #f8fafc;
-  --line: #e2e8f0;
-  --text: #334155;
-  --muted: #64748b;
-  --accent: #4ea5ff;
-  --accent-hover: #3b82f6;
-  --grad: linear-gradient(135deg, #4ea5ff 0%, #ff7eb3 100%);
-  --grad-hover: linear-gradient(135deg, #3b82f6 0%, #f43f5e 100%);
-  --bad: #ef4444;
-  --ok: #10b981;
-  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-body: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-art: "ZCOOL KuaiLe", "Nunito", sans-serif;
+  --panel2: #f5f2ec;
+  --line: #e5e1d8;
+  --line-soft: #efeae0;
+  --text: #1f1d1a;
+  --muted: #6b6862;
+  --accent: #1e3a8a;
+  --accent-hover: #1e40af;
+  --accent-soft: rgba(30, 58, 138, 0.08);
+  --accent-line: rgba(30, 58, 138, 0.25);
+  --bad: #991b1b;
+  --bad-soft: rgba(153, 27, 27, 0.08);
+  --ok: #14532d;
+  --ok-soft: rgba(20, 83, 45, 0.08);
+  --shadow: 0 1px 2px rgba(28, 25, 23, 0.05), 0 2px 8px rgba(28, 25, 23, 0.04);
+  --shadow-lg: 0 8px 24px rgba(28, 25, 23, 0.1), 0 2px 6px rgba(28, 25, 23, 0.05);
+  --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+  --font-serif: Georgia, Cambria, "Times New Roman", Times, "宋体", "SimSun", "STSong", "Songti SC", serif;
+  --font-body: "宋体", "SimSun", "STSong", "Songti SC", Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-display: Georgia, Cambria, "Times New Roman", Times, "宋体", "SimSun", "STSong", serif;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 var(--font-body); }
-button, input, select, textarea { font: inherit; outline: none; }
-button { cursor: pointer; transition: all 0.2s ease; }
-h2, h3, .brand { font-family: var(--font-art); letter-spacing: 0.5px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 var(--font-body); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font-family: var(--font-body); font-size: inherit; outline: none; }
+button { cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+
+.brand, .display { font-family: var(--font-display); font-style: italic; letter-spacing: 0.01em; }
+h2, h3 { font-family: var(--font-display); font-weight: 600; letter-spacing: 0; margin: 0; }
 
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
 .mono { font-family: var(--mono); font-size: 13px; }
 
-.app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
-.side { background: var(--panel); border-right: 1px solid var(--line); padding: 24px 16px; position: sticky; top: 0; height: 100vh; box-shadow: var(--shadow); z-index: 20; }
-.brand { font-size: 32px; margin: 0 0 32px; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; text-align: center; }
-.nav { display: grid; gap: 8px; }
-.nav button { border: 0; background: transparent; color: var(--muted); text-align: left; padding: 14px 18px; border-radius: 12px; font-weight: 700; font-size: 15px; transition: all 0.2s; }
-.nav button:hover { background: var(--panel2); color: var(--text); transform: translateX(6px); }
-.nav button.active { background: var(--grad); color: #fff; box-shadow: 0 4px 12px rgba(78, 165, 255, 0.3); transform: translateX(6px); }
+.app { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.side { background: var(--panel); border-right: 1px solid var(--line); padding: 32px 16px; position: sticky; top: 0; height: 100vh; }
+.brand { font-size: 38px; margin: 0 0 36px; color: var(--accent); text-align: center; line-height: 1; }
+.nav { display: grid; gap: 2px; }
+.nav button { border: 0; background: transparent; color: var(--muted); text-align: left; padding: 10px 14px; border-radius: 4px; font-size: 15px; }
+.nav button:hover { background: var(--panel2); color: var(--text); }
+.nav button.active { background: var(--accent-soft); color: var(--accent); }
+.nav button.active::before { content: "· "; font-family: var(--font-display); font-style: italic; }
 
 .main { min-width: 0; display: flex; flex-direction: column; }
-.top { height: 72px; border-bottom: 1px solid rgba(226, 232, 240, 0.6); display: flex; align-items: center; gap: 16px; padding: 0 32px; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 15; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05); }
-.top .pill { padding: 6px 14px; font-size: 14px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); color: var(--text); font-family: var(--font-art); box-shadow: inset 0 1px 2px rgba(0,0,0,0.02); }
-.top .pill.ok { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.3); color: #047857; }
-.top .pill.bad { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.3); color: #b91c1c; }
-
+.top { height: 56px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 0 32px; background: var(--panel); position: sticky; top: 0; z-index: 15; }
 .grow { flex: 1; }
 
-.pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; color: var(--muted); font-size: 13px; font-weight: 600; background: var(--panel); }
-.pill.ok { color: var(--ok); border-color: var(--ok); background: rgba(16, 185, 129, 0.1); }
-.pill.bad { color: var(--bad); border-color: var(--bad); background: rgba(239, 68, 68, 0.1); }
+.pill { border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; color: var(--muted); font-size: 13px; background: var(--panel); }
+.pill.ok { color: var(--ok); border-color: rgba(20, 83, 45, 0.3); background: var(--ok-soft); }
+.pill.bad { color: var(--bad); border-color: rgba(153, 27, 27, 0.3); background: var(--bad-soft); }
 
-.view { padding: 40px; flex: 1; }
-.view h2 { margin: 0 0 12px; font-size: 32px; color: var(--text); font-family: var(--font-art); }
-.desc { margin: 0 0 32px; color: var(--muted); font-size: 15px; }
+.view { padding: 36px 40px; flex: 1; max-width: 1280px; }
+.view h2 { font-size: 30px; color: var(--text); font-style: italic; margin-bottom: 6px; }
+.desc { margin: 0 0 28px; color: var(--muted); font-size: 14px; }
 
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 28px; margin-bottom: 28px; box-shadow: var(--shadow); transition: transform 0.2s, box-shadow 0.2s; }
-.card:hover { box-shadow: var(--shadow-lg); transform: translateY(-2px); }
-.card h3 { margin: 0 0 20px; font-size: 20px; color: var(--text); font-family: var(--font-art); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 24px; margin-bottom: 20px; box-shadow: var(--shadow); }
+.card h3 { font-size: 18px; color: var(--text); font-style: italic; margin-bottom: 16px; }
 
-.row { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; }
-.col { display: flex; flex-direction: column; gap: 8px; min-width: 180px; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.col { display: flex; flex-direction: column; gap: 6px; min-width: 180px; }
 .col.grow { flex: 1; }
-.col label { font-size: 14px; font-weight: 700; color: var(--muted); }
+.col label { font-size: 13px; color: var(--muted); font-style: italic; }
 
-input, select, textarea { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; font-size: 14px; font-weight: 600; transition: all 0.2s; }
-input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 4px rgba(78, 165, 255, 0.15); background: #fff; }
-textarea { min-height: 100px; resize: vertical; }
+input, select, textarea { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 9px 12px; font-size: 14px; transition: border-color 0.15s, box-shadow 0.15s; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { min-height: 110px; resize: vertical; }
 
-.btn { border: 0; background: var(--grad); color: #fff; padding: 12px 24px; border-radius: 12px; font-weight: 800; font-size: 14px; letter-spacing: 0.5px; box-shadow: 0 4px 12px rgba(78, 165, 255, 0.3); }
-.btn:hover { background: var(--grad-hover); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(78, 165, 255, 0.4); }
-.btn.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); box-shadow: var(--shadow); }
-.btn.secondary:hover { background: var(--panel2); border-color: var(--muted); transform: translateY(-2px); }
-.btn.bad { background: rgba(239, 68, 68, 0.1); color: var(--bad); border: 1px solid var(--bad); box-shadow: none; }
+.btn { border: 1px solid var(--accent); background: var(--accent); color: #fff; padding: 8px 18px; border-radius: 4px; font-size: 14px; }
+.btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--line); }
+.btn.secondary:hover { background: var(--panel2); border-color: var(--muted); }
+.btn.bad { background: var(--panel); color: var(--bad); border: 1px solid var(--bad); }
 .btn.bad:hover { background: var(--bad); color: #fff; }
-.btn.sm { padding: 8px 16px; font-size: 13px; border-radius: 10px; }
+.btn.sm { padding: 5px 12px; font-size: 13px; }
 
-/* Custom Toggle Switch for ALL Checkboxes */
-.switch { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; cursor: pointer; user-select: none; color: var(--text); font-size: 14px; }
-.switch input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 44px; height: 24px; background: var(--line); border-radius: 999px; position: relative; outline: none; cursor: pointer; transition: background 0.3s ease; margin: 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
-.switch input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; background: #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); }
-.switch input[type="checkbox"]:checked { background: var(--grad); }
-.switch input[type="checkbox"]:checked::after { transform: translateX(20px); }
+.switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: var(--text); font-size: 14px; }
+.switch input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 36px; height: 20px; background: var(--line); border-radius: 999px; position: relative; outline: none; cursor: pointer; transition: background 0.2s ease; margin: 0; }
+.switch input[type="checkbox"]::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,0.25); transition: transform 0.2s ease; }
+.switch input[type="checkbox"]:checked { background: var(--accent); }
+.switch input[type="checkbox"]:checked::after { transform: translateX(16px); }
 
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; }
-.stat { border: 1px solid var(--line); background: var(--panel2); border-radius: 16px; padding: 20px; text-align: center; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); transition: transform 0.2s; }
-.stat:hover { transform: translateY(-2px); background: #fff; box-shadow: var(--shadow); border-color: rgba(78,165,255,0.3); }
-.stat .k { color: var(--muted); font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; }
-.stat .v { font-size: 32px; font-weight: 800; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; font-family: var(--font-art); margin-top: 8px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+.stat { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 16px 20px; }
+.stat .k { color: var(--muted); font-size: 13px; font-style: italic; }
+.stat .v { font-size: 32px; color: var(--accent); font-family: var(--font-display); font-style: italic; line-height: 1.2; margin-top: 2px; }
 
-.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 24px; }
-.lib { border: 1px solid var(--line); background: var(--panel); border-radius: 20px; padding: 24px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
-.lib::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: var(--grad); opacity: 0; transition: opacity 0.3s; }
-.lib:hover::before { opacity: 1; }
-.lib-head { display: flex; gap: 16px; align-items: center; }
-.lib-title { font-weight: 800; font-size: 20px; font-family: var(--font-art); margin-bottom: 4px; }
-.lib-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--muted); background: var(--panel2); padding: 4px 8px; border-radius: 6px; display: inline-block; }
+.library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.lib { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 20px; box-shadow: var(--shadow); transition: border-color 0.15s, box-shadow 0.15s; }
+.lib:hover { border-color: var(--accent-line); box-shadow: var(--shadow-lg); }
+.lib-head { display: flex; gap: 14px; align-items: center; }
+.lib-title { font-size: 19px; font-family: var(--font-display); font-style: italic; margin-bottom: 4px; color: var(--accent); }
+.lib-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); background: var(--panel2); padding: 3px 8px; border-radius: 3px; display: inline-block; font-family: var(--mono); }
 
-.toolbar { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; background: var(--panel2); padding: 20px; border-radius: 16px; border: 1px solid var(--line); box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }
+.toolbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; background: var(--panel2); padding: 16px; border-radius: 6px; border: 1px solid var(--line-soft); }
 .toolbar .col { min-width: 140px; flex: 1; }
-.toolbar .btn { margin-bottom: 2px; }
 
-.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 24px; }
-.media { border: 1px solid var(--line); background: var(--panel); border-radius: 16px; overflow: hidden; box-shadow: var(--shadow); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s; }
-.media:hover { transform: translateY(-6px); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); border-color: rgba(78, 165, 255, 0.3); }
-.poster { aspect-ratio: 2/3; background: var(--panel2); display: flex; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 16px; position: relative; overflow: hidden; }
-.poster img { width: 100%; height: 100%; object-fit: cover; display: block; position: absolute; inset: 0; transition: transform 0.5s ease; }
-.media:hover .poster img { transform: scale(1.05); }
-.badge { position: absolute; left: 12px; top: 12px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 999px; padding: 4px 12px; font-size: 12px; font-weight: 700; color: #fff; backdrop-filter: blur(8px); box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
-.media-body { padding: 20px; }
-.title { font-weight: 800; font-size: 16px; min-height: 48px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; color: var(--text); }
-.details { margin-top: 12px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 18px; }
+.media { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; overflow: hidden; box-shadow: var(--shadow); transition: border-color 0.18s, box-shadow 0.18s; }
+.media:hover { border-color: var(--accent-line); box-shadow: var(--shadow-lg); }
+.poster { aspect-ratio: 2/3; background: var(--panel2); display: flex; align-items: center; justify-content: center; color: var(--muted); text-align: center; padding: 12px; position: relative; overflow: hidden; }
+.poster img { width: 100%; height: 100%; object-fit: cover; display: block; position: absolute; inset: 0; }
+.badge { position: absolute; left: 8px; top: 8px; background: rgba(28, 25, 23, 0.78); border-radius: 3px; padding: 2px 8px; font-size: 12px; color: #fff; font-family: var(--font-display); font-style: italic; }
+.media-body { padding: 12px 14px 14px; }
+.title { font-size: 14px; min-height: 42px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; color: var(--text); }
+.details { margin-top: 8px; color: var(--muted); font-size: 13px; }
 
-.output, .logs { background: #1e293b; color: #f8fafc; border-radius: 16px; padding: 20px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 14px; line-height: 1.6; box-shadow: inset 0 4px 6px rgba(0,0,0,0.3); border: 1px solid #334155; }
-.progress { display: grid; gap: 16px; }
-.bar { height: 16px; border-radius: 999px; background: #e2e8f0; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
-.bar div { height: 100%; background: var(--grad); width: 0; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 2px 10px rgba(78, 165, 255, 0.5); }
+.output, .logs { background: #1c1917; color: #f5f2ec; border-radius: 6px; padding: 16px 18px; max-height: 400px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 13px; line-height: 1.65; border: 1px solid #44403c; }
+.progress { display: grid; gap: 12px; }
+.bar { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.bar div { height: 100%; background: var(--accent); width: 0; transition: width 0.4s ease; }
 
-.file-list { max-height: 350px; overflow: auto; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }
-.file-row { display: grid; grid-template-columns: 90px 1fr auto; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); align-items: center; transition: background 0.2s; }
+.file-list { max-height: 350px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.file-row { display: grid; grid-template-columns: 84px 1fr auto; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); align-items: center; }
 .file-row:last-child { border-bottom: none; }
 .file-row.dir { cursor: pointer; }
 .file-row.dir:hover { background: var(--panel2); }
-.file-row .pill { font-weight: 700; letter-spacing: 0.5px; }
 
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
-th, td { padding: 16px 20px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); }
-th { color: var(--muted); font-size: 13px; font-weight: 800; background: var(--panel2); text-transform: uppercase; letter-spacing: 1px; }
-th:first-child { border-top-left-radius: 12px; }
-th:last-child { border-top-right-radius: 12px; }
-tbody tr { transition: background 0.2s; }
+th, td { padding: 12px 16px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line-soft); }
+th { color: var(--muted); font-size: 13px; background: var(--panel2); font-style: italic; font-weight: 600; }
 tbody tr:hover { background: var(--panel2); }
 
-.login { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); position: relative; overflow: hidden; }
-.login::before { content: ""; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(circle, rgba(78,165,255,0.08) 0%, rgba(255,126,179,0.04) 50%, transparent 100%); z-index: 0; pointer-events: none; }
-.login .card { width: min(520px, 100%); position: relative; z-index: 1; padding: 48px 40px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15); border-radius: 24px; }
-.login h2 { font-size: 36px; margin-bottom: 12px; color: transparent; background: var(--grad); -webkit-background-clip: text; background-clip: text; letter-spacing: 1px; }
+.login { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.login .card { width: min(440px, 100%); padding: 44px 38px; text-align: center; border-radius: 10px; box-shadow: 0 12px 40px rgba(28, 25, 23, 0.1); border: 1px solid var(--line); }
+.login h2 { font-size: 42px; margin-bottom: 8px; color: var(--accent); font-style: italic; }
+.login .desc { font-size: 14px; }
 
-.modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.65); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 50; opacity: 1; transition: opacity 0.3s ease; }
+.modal { position: fixed; inset: 0; background: rgba(28, 25, 23, 0.55); backdrop-filter: blur(4px); display: grid; place-items: center; z-index: 50; }
 .modal.hidden { opacity: 0; pointer-events: none; display: grid !important; }
-.modal-box { width: min(1000px, 94vw); max-height: 90vh; overflow: auto; background: var(--panel); border-radius: 24px; padding: 40px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3); transform: translateY(0) scale(1); transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-.modal.hidden .modal-box { transform: translateY(30px) scale(0.95); }
+.modal-box { width: min(960px, 94vw); max-height: 90vh; overflow: auto; background: var(--panel); border-radius: 10px; padding: 32px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); }
 
-.actions { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; background: var(--panel2); padding: 20px; border-radius: 16px; border: 1px solid var(--line); }
-.edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.actions { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; background: var(--panel2); padding: 14px 16px; border-radius: 6px; border: 1px solid var(--line-soft); }
+.edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .edit-grid .wide { grid-column: 1 / -1; }
 
 @media(max-width: 800px) {
   .app { grid-template-columns: 1fr; }
-  .side { height: auto; position: sticky; top: 0; display: flex; flex-direction: column; padding: 16px 24px; z-index: 30; border-right: none; border-bottom: 1px solid var(--line); }
-  .brand { margin-bottom: 16px; font-size: 24px; }
-  .nav { display: flex; overflow-x: auto; padding-bottom: 8px; gap: 12px; }
-  .nav button { white-space: nowrap; padding: 10px 16px; font-size: 14px; }
-  .nav button:hover { transform: translateY(-2px); }
-  .nav button.active { transform: translateY(-2px); }
+  .side { height: auto; position: sticky; top: 0; padding: 14px 20px; border-right: none; border-bottom: 1px solid var(--line); }
+  .brand { margin-bottom: 12px; font-size: 30px; }
+  .nav { display: flex; overflow-x: auto; padding-bottom: 4px; gap: 6px; }
+  .nav button { white-space: nowrap; padding: 6px 12px; font-size: 14px; }
   .toolbar { flex-direction: column; align-items: stretch; }
   .edit-grid, .actions { grid-template-columns: 1fr; flex-direction: column; align-items: stretch; }
-  .top { position: relative; padding: 0 24px; height: auto; padding-top: 16px; padding-bottom: 16px; flex-wrap: wrap; }
-  .view { padding: 24px; }
+  .top { padding: 12px 20px; flex-wrap: wrap; height: auto; }
+  .view { padding: 22px; }
 }
 </style>
 </head>
@@ -259,6 +246,7 @@ tbody tr:hover { background: var(--panel2); }
         <div class="actions" style="margin-top: 16px;">
           <label class="switch"><input type="checkbox" id="scan-follow"><span>解析符号链接</span></label>
           <label class="switch"><input type="checkbox" id="scan-dry"><span>演练模式 (不写入)</span></label>
+          <label class="switch"><input type="checkbox" id="scan-probe"><span>同步探测媒体信息(慢)</span></label>
           <span class="grow"></span>
           <button class="btn" id="btn-scan">立即开始扫描</button>
         </div>
@@ -268,6 +256,16 @@ tbody tr:hover { background: var(--panel2); }
           <button class="btn sm secondary" id="btn-refresh-files">刷新目录</button>
         </div>
         <div id="file-list" class="file-list" style="margin-top:16px"></div>
+      </div>
+      <div class="card">
+        <h3>媒体信息补全</h3>
+        <div class="actions">
+          <div class="col"><label>最大条目</label><input id="probe-max" type="number" value="0" style="width: 150px;"></div>
+          <div class="col"><label>并发数</label><input id="probe-workers" type="number" value="8" min="1" max="32" style="width: 150px;"></div>
+          <label class="switch" style="margin-top: 20px;"><input type="checkbox" id="probe-force"><span>重新探测已有信息</span></label>
+          <span class="grow"></span>
+          <button class="btn secondary" id="btn-probe" style="margin-top: 20px;">后台补全媒体信息</button>
+        </div>
       </div>
       <div class="card"><h3>扫描进度</h3><div id="scan-output" class="output muted">暂无扫描任务</div></div>
     </section>
@@ -289,7 +287,7 @@ tbody tr:hover { background: var(--panel2); }
       <div class="card">
         <h3>批量补全</h3>
         <div class="actions">
-          <div class="col"><label>最多条目</label><input id="tmdb-max" type="number" value="200" style="width: 150px;"></div>
+          <div class="col"><label>最多条目</label><input id="tmdb-max" type="number" value="0" style="width: 150px;"></div>
           <span style="width: 1px; height: 24px; background: var(--line); margin: 0 8px; margin-top: 20px;"></span>
           <label class="switch" style="margin-top: 20px;"><input type="checkbox" id="tmdb-force"><span>覆盖已有字段</span></label>
           <span class="grow"></span>
@@ -327,7 +325,7 @@ tbody tr:hover { background: var(--panel2); }
           <button class="btn secondary" id="btn-users-load" style="height: 45px;">刷新</button>
         </div>
         <div style="overflow-x: auto; margin-top:24px; border: 1px solid var(--line); border-radius: 12px;">
-          <table><thead><tr><th>ID</th><th>名称</th><th>管理员</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-body"></tbody></table>
+          <table><thead><tr><th>ID</th><th>名称</th><th>权限</th><th>媒体库</th><th>状态</th><th>操作</th></tr></thead><tbody id="users-body"></tbody></table>
         </div>
       </div>
     </section>
@@ -347,7 +345,7 @@ tbody tr:hover { background: var(--panel2); }
 <div id="log-modal" class="modal hidden">
   <div class="modal-box">
     <div class="row" style="margin-bottom: 24px; align-items: center;">
-      <h3 style="margin: 0; font-family: var(--font-art); font-size: 28px;">后端日志</h3>
+      <h3 style="margin: 0; font-size: 24px; font-style: italic;">后端日志</h3>
       <span class="grow"></span>
       <select id="log-level" style="border-radius: 99px;"><option value="">全部级别</option><option>INFO</option><option>WARN</option><option>ERROR</option><option>DEBUG</option></select>
       <select id="log-cat" style="border-radius: 99px;"><option value="">全部分类</option><option>http</option><option>scan</option><option>watch</option><option>tmdb</option><option>auth</option><option>admin</option><option>app</option></select>
@@ -361,7 +359,7 @@ tbody tr:hover { background: var(--panel2); }
 <div id="media-edit-modal" class="modal hidden">
   <div class="modal-box">
     <div class="row" style="margin-bottom: 24px; align-items: center;">
-      <h3 style="margin: 0; font-family: var(--font-art); font-size: 28px;">编辑元数据</h3>
+      <h3 style="margin: 0; font-size: 24px; font-style: italic;">编辑元数据</h3>
       <span class="grow"></span>
       <button class="btn secondary" id="btn-media-edit-close">关闭</button>
     </div>
@@ -399,14 +397,19 @@ async function loadMediaStats(render=true){if(!S.selectedLib)return null;const q
 function renderMediaStats(s){if(!s)return;$("#media-stats").innerHTML=[["总资源",s.total],["已刮削",s.scraped],["未刮削",s.unscraped],["缺海报",s.missing_poster],["缺信息",s.missing_info],["完整",s.complete]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}
 function mediaCard(i){const img=i.poster_url?`<img src="${esc(asset(i.poster_url))}" onerror="this.remove()">`:"";const meta=i.type==="tv"?`${i.season_count||0} 季 / ${i.episode_count||0} 集`:`${i.media_count||0} 个媒体`;const flags=[i.missing_poster?"缺海报":"",i.missing_info?"缺信息":""].filter(Boolean).map(x=>`<span class="pill bad">${x}</span>`).join(" ");return `<div class=media><div class=poster>${img}<span>${esc(i.title)}</span><span class=badge>${i.type==="tv"?"剧集":"电影"}</span></div><div class=media-body><div class=title>${esc(i.title)}</div><div class=muted>${meta}${i.year?" / "+i.year:""}</div><div style="margin-top:6px">${flags}</div><div class=row style="margin-top:8px"><button class="btn sm secondary" data-edit="${i.id}">编辑</button><button class="btn sm secondary" data-refresh="${i.id}">刮削</button></div><details data-id="${i.id}"><summary>展开</summary><div class=details id="child-${i.id}">加载中</div></details></div></div>`}
 async function loadChildren(id){if(S.mediaChildren[id])return renderChildren(id,S.mediaChildren[id]);const d=await api("GET","/admin/media/"+id+"/children");S.mediaChildren[id]=d;renderChildren(id,d)}
-function renderChildren(id,d){const el=$("#child-"+id);if(!el)return;let html="";if(d.type==="tv"){html+=`<div>${(d.seasons||[]).length} 季，${(d.episodes||[]).length} 集</div>`;html+=(d.episodes||[]).slice(0,30).map(e=>`<div>S${e.season_number||0}E${e.episode_number}: ${esc(e.title)}</div>`).join("")}else{html+=(d.sources||[]).map(s=>`<div>${esc(s.name)} <span class=muted>${esc(s.path_url||"")}</span></div>`).join("")}el.innerHTML=html||"暂无详情"}
-function openMediaEdit(id){const item=S.mediaItems.find(x=>String(x.id)===String(id));if(!item)return;S.editingMedia=item;$("#media-edit-msg").textContent="";$("#media-edit-form").innerHTML=`<div class=col><label>标题</label><input id="edit-title" value="${esc(item.title||"")}"></div><div class=col><label>原始标题</label><input id="edit-original" value="${esc(item.original_title||"")}"></div><div class=col><label>TMDB ID</label><input id="edit-tmdb" value="${esc(item.tmdb_id||"")}"></div><div class=col><label>首播/上映日期</label><input id="edit-date" placeholder="YYYY-MM-DD" value="${esc(item.date_air||"")}"></div><div class=col><label>时长(分钟)</label><input id="edit-runtime" type="number" min="0" value="${esc(item.runtime||"")}"></div><div class=col><label>标语</label><input id="edit-tagline" value="${esc(item.tagline||"")}"></div><div class="col wide"><label>简介</label><textarea id="edit-overview">${esc(item.overview||"")}</textarea></div><div class="col wide"><label>海报 URL / TMDB 路径</label><input id="edit-poster" value="${esc(item.poster_url||"")}"></div><div class="col wide"><label>背景图 URL / TMDB 路径</label><input id="edit-backdrop" value="${esc(item.backdrop_url||"")}"></div>`;$("#media-edit-modal").classList.remove("hidden")}
+function fmtBytes(n){n=Number(n||0);if(!n)return"-";const u=["B","KB","MB","GB","TB"];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n.toFixed(i?1:0)} ${u[i]}`}
+function fmtDuration(s){s=Number(s||0);if(!s)return"-";const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=Math.floor(s%60);return h?`${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`:`${m}:${String(sec).padStart(2,"0")}`}
+function fmtBitrate(b){b=Number(b||0);if(!b)return"-";return b>=1000000?`${(b/1000000).toFixed(1)} Mbps`:`${Math.round(b/1000)} Kbps`}
+function renderChildren(id,d){const el=$("#child-"+id);if(!el)return;let html="";if(d.type==="tv"){html+=`<div>${(d.seasons||[]).length} 季，${(d.episodes||[]).length} 集</div>`;html+=(d.episodes||[]).slice(0,30).map(e=>`<div>S${e.season_number||0}E${e.episode_number}: ${esc(e.title)}</div>`).join("")}const sources=(d.sources||[]);if(sources.length){html+=sources.map(s=>{const video=s.video_codec?`${esc(s.video_codec)} ${s.width&&s.height?`${s.width}x${s.height}`:""}`:"-";const audio=s.audio_codec?esc(s.audio_codec):"-";return `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><strong>${esc(s.name)}</strong><div class=muted>${esc(s.path_type||"")} / ${esc(s.container||"")} / ${fmtBytes(s.size)} / ${fmtDuration(s.duration)} / ${fmtBitrate(s.bitrate)}</div><div class=muted>视频: ${video} · 音频: ${audio} · 流: ${s.stream_count||0}</div><div class="muted mono">${esc(s.path_url||"")}</div></div>`}).join("")}el.innerHTML=html||"暂无详情"}
+function openMediaEdit(id){const item=S.mediaItems.find(x=>String(x.id)===String(id));if(!item)return;S.editingMedia=item;$("#media-edit-modal h3").textContent="编辑元数据";$("#media-edit-msg").textContent="";$("#media-edit-form").innerHTML=`<div class=col><label>标题</label><input id="edit-title" value="${esc(item.title||"")}"></div><div class=col><label>原始标题</label><input id="edit-original" value="${esc(item.original_title||"")}"></div><div class=col><label>TMDB ID</label><input id="edit-tmdb" value="${esc(item.tmdb_id||"")}"></div><div class=col><label>首播/上映日期</label><input id="edit-date" placeholder="YYYY-MM-DD" value="${esc(item.date_air||"")}"></div><div class=col><label>时长(分钟)</label><input id="edit-runtime" type="number" min="0" value="${esc(item.runtime||"")}"></div><div class=col><label>标语</label><input id="edit-tagline" value="${esc(item.tagline||"")}"></div><div class="col wide"><label>简介</label><textarea id="edit-overview">${esc(item.overview||"")}</textarea></div><div class="col wide"><label>海报 URL / TMDB 路径</label><input id="edit-poster" value="${esc(item.poster_url||"")}"></div><div class="col wide"><label>背景图 URL / TMDB 路径</label><input id="edit-backdrop" value="${esc(item.backdrop_url||"")}"></div>`;$("#media-edit-modal").classList.remove("hidden")}
 async function saveMediaEdit(){const item=S.editingMedia;if(!item)return;$("#media-edit-msg").textContent="保存中";const body={title:$("#edit-title").value.trim(),original_title:$("#edit-original").value.trim(),tmdb_id:$("#edit-tmdb").value.trim(),date_air:$("#edit-date").value.trim(),runtime:Number($("#edit-runtime").value||0),tagline:$("#edit-tagline").value.trim(),overview:$("#edit-overview").value.trim(),poster_url:$("#edit-poster").value.trim(),backdrop_url:$("#edit-backdrop").value.trim()};await api("PATCH","/admin/media/"+item.id,body);$("#media-edit-modal").classList.add("hidden");S.editingMedia=null;await loadMedia()}
 async function refreshOneTMDB(id){await api("POST","/admin/items/"+id+"/tmdb/refresh",{force:false});await loadMedia()}
 async function scrapeMissingMedia(missing){if(!S.selectedLib)return;const state=$("#media-scrape-state");state.textContent="刮削中...";const body={library_id:S.selectedLib.id,video_type:$("#media-type").value,max:Number((S.mediaStats&&S.mediaStats.total)||1000),missing,force:$("#media-scrape-force").checked};const job=await api("POST","/admin/tmdb/refresh-all/start",body);while(true){const j=await api("GET","/admin/tmdb/refresh-all/"+job.id);const p=j.progress||{};const total=Number(p.total||0),done=Number(p.processed||0),left=Math.max(0,total-done);state.textContent=`${j.status}：${done}/${total}，剩余 ${left}，匹配 ${p.matched||0}，跳过 ${p.skipped||0}，失败 ${p.failed||0}`;if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}await loadMedia(true)}
 async function loadFiles(path="/data"){S.browsePath=path;$("#browse-path").textContent=path;try{const r=await api("GET","/admin/files?path="+encodeURIComponent(path));S.browsePath=r.path;$("#browse-path").textContent=r.path;$("#file-list").innerHTML=(r.entries||[]).map(e=>`<div class="file-row ${e.type}" data-path="${esc(e.path)}"><span class=pill>${e.type==="dir"?"目录":(e.media?"媒体":"文件")}</span><span>${esc(e.name)}</span><span class=muted>${e.size||""}</span></div>`).join("")}catch(e){$("#file-list").innerHTML=`<div class=muted style="padding:10px">${esc(e.message)}</div>`}}
-async function runScan(){const id=$("#scan-lib").value;const root=$("#scan-root").value.trim();if(!id||!root)return;$("#scan-output").innerHTML="启动扫描";const job=await api("POST","/admin/library/scan/start",{library_id:Number(id),root,default_type:$("#scan-type").value,scrape:$("#scan-scrape").value,follow_symlinks:$("#scan-follow").checked,dry_run:$("#scan-dry").checked});while(true){const j=await api("GET","/admin/library/scan/"+job.id);renderScan(j);if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}await loadLibraries()}
+async function runScan(){const id=$("#scan-lib").value;const root=$("#scan-root").value.trim();if(!id||!root)return;$("#scan-output").innerHTML="启动扫描";const job=await api("POST","/admin/library/scan/start",{library_id:Number(id),root,default_type:$("#scan-type").value,scrape:$("#scan-scrape").value,follow_symlinks:$("#scan-follow").checked,dry_run:$("#scan-dry").checked,probe_media:$("#scan-probe").checked});while(true){const j=await api("GET","/admin/library/scan/"+job.id);renderScan(j);if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}await loadLibraries()}
 function reportOf(r){return r&&r.import?r.import:r} function renderScan(j){const p=j.progress||{},rep=p.report||{},total=Number(p.total_dirs||0),done=Number(p.processed_dirs||0),pct=total?Math.round(done*100/total):0;$("#scan-output").innerHTML=`<div class=progress><div><span class=pill>${esc(j.status)}</span> ${total?done+"/"+total:"遍历 "+(p.walked_dirs||0)}</div><div class=bar><div style="width:${pct}%"></div></div><div class="mono muted">${esc(p.current||"")}</div><div class=stats>${[["电影",rep.movies_imported],["剧集",rep.series_imported],["集数",rep.episodes_imported],["媒体源",rep.media_rows_imported]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}</div>${j.result?`<div class=muted>完成：${JSON.stringify(reportOf(j.result))}</div>`:""}</div>`}
+async function runProbe(){let libID=S.selectedLib&&S.selectedLib.id;if(!libID){libID=Number($("#scan-lib").value||0)}if(!libID){$("#scan-output").innerHTML=`<div class=muted>请先选择或打开一个媒体库</div>`;return}const body={library_id:libID,max:Number($("#probe-max").value||0),workers:Number($("#probe-workers").value||8),force:$("#probe-force").checked};$("#scan-output").innerHTML=`<div class=progress><div><span class=pill>starting</span> 正在创建媒体信息补全任务...</div><div class=bar><div style="width:1%"></div></div></div>`;try{const job=await api("POST","/admin/media/probe/start",body);renderProbe(job);while(true){const j=await api("GET","/admin/media/probe/"+job.id);renderProbe(j);if(j.status==="done"||j.status==="failed")break;await new Promise(r=>setTimeout(r,1000))}if(S.selectedLib)await loadMedia()}catch(e){$("#scan-output").innerHTML=`<div class="pill bad">失败</div><div class=muted style="margin-top:12px">${esc(e.message)}</div>`}}
+function renderProbe(j){const p=j.progress||{},total=Number(p.total||0),done=Number(p.processed||0),active=Number(p.active||0),pct=total?Math.max(active?1:0,Math.round(done*100/total)):0;$("#scan-output").innerHTML=`<div class=progress><div><span class=pill>${esc(j.status)}</span> 已完成 ${done}/${total}，正在探测 ${active}</div><div class=bar><div style="width:${pct}%"></div></div><div class="mono muted">${esc(p.current||"等待任务开始")}</div><div class=stats>${[["更新",p.updated],["探测中",p.active],["失败",p.failed],["总数",p.total]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}</div>${(p.errors||[]).length?`<div style="margin-top:12px">${p.errors.map(e=>`<div class="muted">${esc(e)}</div>`).join("")}</div>`:""}</div>`}
 async function loadTMDB(){const s=await api("GET","/admin/tmdb/settings");$("#tmdb-lang").value=s.language||"zh-CN";$("#tmdb-auto").checked=!!s.auto_scrape;$("#tmdb-state").textContent=s.configured?"已配置 TMDB key":"未配置 TMDB key"}
 async function saveTMDB(){const r=await api("POST","/admin/tmdb/settings",{api_key:$("#tmdb-key").value.trim(),language:$("#tmdb-lang").value,auto_scrape:$("#tmdb-auto").checked});$("#tmdb-key").value="";$("#tmdb-state").textContent=r.configured?"已保存，TMDB key 已配置":"已保存，未配置 TMDB key"}
 async function testTMDB(){const r=await api("POST","/admin/tmdb/settings/test",{api_key:$("#tmdb-key").value.trim(),language:$("#tmdb-lang").value});$("#tmdb-state").textContent=`测试成功，返回 ${r.results} 条结果`}
@@ -414,10 +417,13 @@ async function refreshAllTMDB(){const out=$("#tmdb-output");out.textContent="正
 function renderTMDBBatch(r){const out=$("#tmdb-output");const sec=Math.round(Number(r.duration_ms||0)/100)/10;const items=r.items||[];const ok=items.filter(x=>!x.failed&&!x.skipped&&x.matched_tmdb_id);const skipped=items.filter(x=>x.skipped&&!x.failed);const failed=items.filter(x=>x.failed);const rows=[...failed,...skipped,...ok].map(x=>{const type=x.video_type==="tv"?"剧集":"电影";const status=x.failed?`<span class="pill bad">失败</span>`:(x.skipped?`<span class="pill">未匹配</span>`:`<span class="pill ok">已匹配</span>`);const match=x.matched_title?` -> ${esc(x.matched_title)} (#${esc(x.matched_tmdb_id)})`:(x.matched_tmdb_id?` -> TMDB #${esc(x.matched_tmdb_id)}`:"");const reason=x.reason?`<div class="muted">${esc(x.reason)}</div>`:"";return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">${status} <span class="pill">${type}</span> ${esc(x.title||("#"+x.video_list_id))}${match}${reason}</div>`}).join("");out.innerHTML=`<div class="stats">${[["处理",r.processed],["匹配",r.matched],["跳过",r.skipped],["失败",r.failed],["耗时",sec+"s"]].map(x=>`<div class="stat"><div class="k">${x[0]}</div><div class="v">${esc(x[1]??0)}</div></div>`).join("")}</div><div style="margin-top:12px">${rows||"暂无结果"}</div>${(r.errors||[]).length?`<div style="margin-top:12px"><strong>错误</strong>${r.errors.map(e=>`<div class="muted">${esc(e)}</div>`).join("")}</div>`:""}`}
 async function loadKeys(){const ks=await api("GET","/admin/api-keys");$("#keys-body").innerHTML=ks.map(k=>`<tr><td>${k.id}</td><td>${esc(k.name)}</td><td>${esc(k.remark||"")}</td><td class=mono>${esc(k.token_prefix)}</td><td>${esc(k.last_used_at||"-")}</td><td><button class="btn sm bad" data-key="${k.id}">撤销</button></td></tr>`).join("")||"<tr><td colspan=6 class=muted>暂无 Key</td></tr>"}
 async function createKey(){const r=await api("POST","/admin/api-keys",{name:$("#key-name").value.trim(),remark:$("#key-remark").value.trim()});$("#new-key").classList.remove("hidden");$("#new-key").textContent="请立刻记录，之后不会再次显示：\n"+r.token;$("#key-name").value="";$("#key-remark").value="";await loadKeys()}
-async function loadUsers(){const us=await api("GET","/Users");$("#users-body").innerHTML=(us||[]).map(u=>`<tr><td>${esc(u.Id)}</td><td>${esc(u.Name)}</td><td>${u.Policy&&u.Policy.IsAdministrator?"是":"否"}</td><td>${u.Policy&&u.Policy.IsDisabled?"禁用":"正常"}</td><td></td></tr>`).join("")}
+function userFoldersText(u){const p=u.Policy||{};if(p.EnableAllFolders)return"全部";const ids=(p.EnabledFolders||[]).map(x=>String(x).replace(/^vb-/,""));if(!ids.length)return"全部";return ids.map(id=>{const l=S.libs.find(x=>String(x.id)===String(id));return l?l.name:"#"+id}).join("、")}
+async function loadUsers(){if(!S.libs.length)await loadLibraries();const us=await api("GET","/Users");$("#users-body").innerHTML=(us||[]).map(u=>{const p=u.Policy||{};const roles=[p.IsAdministrator?"管理员":"普通",p.EnableContentDownloading?"可下载":"不可下载"].join(" / ");return `<tr><td>${esc(u.Id)}</td><td>${esc(u.Name)}</td><td>${roles}</td><td>${esc(userFoldersText(u))}</td><td>${p.IsDisabled?"禁用":"正常"}</td><td><button class="btn sm secondary" data-user-edit="${esc(u.Id)}">编辑</button> <button class="btn sm bad" data-user-del="${esc(u.Id)}">删除</button></td></tr>`}).join("")||"<tr><td colspan=6 class=muted>暂无用户</td></tr>"}
 async function createUser(){await api("POST","/Users/New",{Name:$("#user-name").value.trim(),Password:$("#user-pass").value});$("#user-name").value="";$("#user-pass").value="";await loadUsers()}
+async function openUserEdit(id){const u=await api("GET","/Users/"+id);const p=u.Policy||{};const enabled=(p.EnabledFolders||[]).map(x=>String(x).replace(/^vb-/,""));const all=p.EnableAllFolders||!enabled.length;const libs=S.libs.map(l=>`<label class=switch><input type=checkbox class=user-lib value="${l.id}" ${all||enabled.includes(String(l.id))?"checked":""}><span>${esc(l.name)}</span></label>`).join("");$("#media-edit-msg").textContent="";$("#media-edit-form").innerHTML=`<input type=hidden id="edit-user-id" value="${esc(u.Id)}"><div class=col><label>用户名</label><input id="edit-user-name" value="${esc(u.Name||"")}"></div><div class=col><label>新密码</label><input id="edit-user-pass" type=password placeholder="留空不修改"></div><div class="col wide"><label class=switch><input id="edit-user-admin" type=checkbox ${p.IsAdministrator?"checked":""}><span>管理员</span></label><label class=switch><input id="edit-user-disabled" type=checkbox ${p.IsDisabled?"checked":""}><span>禁用账号</span></label><label class=switch><input id="edit-user-download" type=checkbox ${p.EnableContentDownloading?"checked":""}><span>允许下载</span></label><label class=switch><input id="edit-user-all" type=checkbox ${all?"checked":""}><span>允许访问全部媒体库</span></label></div><div class="col wide"><label>可见媒体库</label><div class=actions>${libs||"<span class=muted>暂无媒体库</span>"}</div></div>`;$("#media-edit-modal h3").textContent="编辑用户";$("#media-edit-modal").classList.remove("hidden")}
+async function saveUserEdit(){const id=$("#edit-user-id")&&$("#edit-user-id").value;if(!id)return false;const all=$("#edit-user-all").checked;const enabled=all?[]:$$(".user-lib:checked").map(x=>Number(x.value));const pass=$("#edit-user-pass").value;const body={name:$("#edit-user-name").value.trim(),is_administrator:$("#edit-user-admin").checked,is_disabled:$("#edit-user-disabled").checked,enable_content_downloading:$("#edit-user-download").checked,enable_all_folders:all,enabled_folders:enabled};if(pass)body.password=pass;await api("PATCH","/admin/users/"+id,body);$("#media-edit-modal").classList.add("hidden");$("#media-edit-modal h3").textContent="编辑元数据";await loadUsers();return true}
 async function loadLogs(){const q=new URLSearchParams({limit:"250"});if($("#log-level").value)q.set("level",$("#log-level").value);if($("#log-cat").value)q.set("category",$("#log-cat").value);const r=await api("GET","/admin/logs?"+q);$("#logs").innerHTML=(r.items||[]).map(l=>`[${esc(l.time)}] ${esc(l.level)} ${esc(l.category)} ${esc(l.message)} ${esc(JSON.stringify(l.attrs||{}))}`).join("\n")}
-function bind(){ $("#btn-login").onclick=login;$("#login-key").addEventListener("keydown",e=>{if(e.key==="Enter")login()});$("#nav").onclick=e=>{const b=e.target.closest("button[data-view]");if(b)show(b.dataset.view)};$("#btn-logout").onclick=()=>{localStorage.removeItem(LS);location.reload()};$("#btn-lib-create").onclick=createLibrary;$("#library-grid").onclick=async e=>{const c=e.target.closest(".lib");if(!c)return;const l=S.libs.find(x=>String(x.id)===c.dataset.id);const act=e.target.dataset.act;if(act==="open")openLib(l.id);if(act==="scan"){show("scanner");$("#scan-lib").value=l.id;$("#scan-root").value=l.root_path||"/data"}if(act==="del"&&confirm("删除媒体库？")){await api("DELETE","/admin/libraries/"+l.id);await loadLibraries()}};$("#library-grid").onchange=e=>{if(e.target.dataset.act==="watch"){const c=e.target.closest(".lib");const l=S.libs.find(x=>String(x.id)===c.dataset.id);patchLibrary(l,{watch_enabled:e.target.checked})}};$("#btn-media-load").onclick=()=>loadMedia(true);$("#media-type").onchange=()=>loadMedia(true);$("#media-limit").onchange=()=>loadMedia(true);$("#media-missing").onchange=()=>loadMedia(true);$("#btn-media-scrape-missing").onclick=()=>scrapeMissingMedia("any");$("#btn-media-scrape-poster").onclick=()=>scrapeMissingMedia("poster");$("#btn-media-scrape-info").onclick=()=>scrapeMissingMedia("info");$("#media-search").addEventListener("keydown",e=>{if(e.key==="Enter")loadMedia(true)});$("#media-prev").onclick=()=>{S.mediaOffset=Math.max(0,S.mediaOffset-Number($("#media-limit").value));loadMedia()};$("#media-next").onclick=()=>{if(S.mediaOffset+Number($("#media-limit").value)<S.mediaTotal){S.mediaOffset+=Number($("#media-limit").value);loadMedia()}};$("#media-grid").onclick=e=>{const edit=e.target.closest("button[data-edit]");if(edit)openMediaEdit(edit.dataset.edit);const refresh=e.target.closest("button[data-refresh]");if(refresh)refreshOneTMDB(refresh.dataset.refresh)};$("#media-grid").addEventListener("toggle",e=>{if(e.target.matches("details[data-id]")&&e.target.open)loadChildren(e.target.dataset.id)},true);$("#btn-media-edit-close").onclick=()=>{$("#media-edit-modal").classList.add("hidden");S.editingMedia=null};$("#btn-media-edit-save").onclick=saveMediaEdit;$("#file-list").onclick=e=>{const r=e.target.closest(".file-row.dir");if(r)loadFiles(r.dataset.path)};$("#btn-use-path").onclick=()=>{$("#scan-root").value=S.browsePath};$("#btn-refresh-files").onclick=()=>loadFiles(S.browsePath);$("#btn-scan").onclick=runScan;$("#btn-tmdb-save").onclick=saveTMDB;$("#btn-tmdb-test").onclick=testTMDB;$("#btn-tmdb-all").onclick=refreshAllTMDB;$("#btn-key-create").onclick=createKey;$("#keys-body").onclick=async e=>{const b=e.target.closest("button[data-key]");if(b&&confirm("撤销这个 API Key？")){await api("DELETE","/admin/api-keys/"+b.dataset.key);await loadKeys()}};$("#btn-user-create").onclick=createUser;$("#btn-users-load").onclick=loadUsers;$("#btn-logs").onclick=()=>{$("#log-modal").classList.remove("hidden");loadLogs();S.logTimer=setInterval(loadLogs,4000)};$("#btn-log-close").onclick=()=>{$("#log-modal").classList.add("hidden");clearInterval(S.logTimer)};$("#btn-log-refresh").onclick=loadLogs;$("#log-level").onchange=loadLogs;$("#log-cat").onchange=loadLogs;$("#btn-save-cfg").onclick=()=>{S.url=$("#cfg-url").value.trim();save();boot()}}
+function bind(){ $("#btn-login").onclick=login;$("#login-key").addEventListener("keydown",e=>{if(e.key==="Enter")login()});$("#nav").onclick=e=>{const b=e.target.closest("button[data-view]");if(b)show(b.dataset.view)};$("#btn-logout").onclick=()=>{localStorage.removeItem(LS);location.reload()};$("#btn-lib-create").onclick=createLibrary;$("#library-grid").onclick=async e=>{const c=e.target.closest(".lib");if(!c)return;const l=S.libs.find(x=>String(x.id)===c.dataset.id);const act=e.target.dataset.act;if(act==="open")openLib(l.id);if(act==="scan"){show("scanner");$("#scan-lib").value=l.id;$("#scan-root").value=l.root_path||"/data"}if(act==="del"&&confirm("删除媒体库？")){await api("DELETE","/admin/libraries/"+l.id);await loadLibraries()}};$("#library-grid").onchange=e=>{if(e.target.dataset.act==="watch"){const c=e.target.closest(".lib");const l=S.libs.find(x=>String(x.id)===c.dataset.id);patchLibrary(l,{watch_enabled:e.target.checked})}};$("#btn-media-load").onclick=()=>loadMedia(true);$("#media-type").onchange=()=>loadMedia(true);$("#media-limit").onchange=()=>loadMedia(true);$("#media-missing").onchange=()=>loadMedia(true);$("#btn-media-scrape-missing").onclick=()=>scrapeMissingMedia("any");$("#btn-media-scrape-poster").onclick=()=>scrapeMissingMedia("poster");$("#btn-media-scrape-info").onclick=()=>scrapeMissingMedia("info");$("#media-search").addEventListener("keydown",e=>{if(e.key==="Enter")loadMedia(true)});$("#media-prev").onclick=()=>{S.mediaOffset=Math.max(0,S.mediaOffset-Number($("#media-limit").value));loadMedia()};$("#media-next").onclick=()=>{if(S.mediaOffset+Number($("#media-limit").value)<S.mediaTotal){S.mediaOffset+=Number($("#media-limit").value);loadMedia()}};$("#media-grid").onclick=e=>{const edit=e.target.closest("button[data-edit]");if(edit)openMediaEdit(edit.dataset.edit);const refresh=e.target.closest("button[data-refresh]");if(refresh)refreshOneTMDB(refresh.dataset.refresh)};$("#media-grid").addEventListener("toggle",e=>{if(e.target.matches("details[data-id]")&&e.target.open)loadChildren(e.target.dataset.id)},true);$("#btn-media-edit-close").onclick=()=>{$("#media-edit-modal").classList.add("hidden");S.editingMedia=null;$("#media-edit-modal h3").textContent="编辑元数据"};$("#btn-media-edit-save").onclick=async()=>{if(await saveUserEdit())return;await saveMediaEdit()};$("#file-list").onclick=e=>{const r=e.target.closest(".file-row.dir");if(r)loadFiles(r.dataset.path)};$("#btn-use-path").onclick=()=>{$("#scan-root").value=S.browsePath};$("#btn-refresh-files").onclick=()=>loadFiles(S.browsePath);$("#btn-scan").onclick=runScan;$("#btn-probe").onclick=runProbe;$("#btn-tmdb-save").onclick=saveTMDB;$("#btn-tmdb-test").onclick=testTMDB;$("#btn-tmdb-all").onclick=refreshAllTMDB;$("#btn-key-create").onclick=createKey;$("#keys-body").onclick=async e=>{const b=e.target.closest("button[data-key]");if(b&&confirm("撤销这个 API Key？")){await api("DELETE","/admin/api-keys/"+b.dataset.key);await loadKeys()}};$("#btn-user-create").onclick=createUser;$("#btn-users-load").onclick=loadUsers;$("#users-body").onclick=async e=>{const edit=e.target.closest("button[data-user-edit]");if(edit)openUserEdit(edit.dataset.userEdit);const del=e.target.closest("button[data-user-del]");if(del&&confirm("删除这个用户？")){await api("DELETE","/Users/"+del.dataset.userDel);await loadUsers()}};$("#btn-logs").onclick=()=>{$("#log-modal").classList.remove("hidden");loadLogs();S.logTimer=setInterval(loadLogs,4000)};$("#btn-log-close").onclick=()=>{$("#log-modal").classList.add("hidden");clearInterval(S.logTimer)};$("#btn-log-refresh").onclick=loadLogs;$("#log-level").onchange=loadLogs;$("#log-cat").onchange=loadLogs;$("#btn-save-cfg").onclick=()=>{S.url=$("#cfg-url").value.trim();save();boot()}}
 function init(){bind();const c=load();if(c&&c.token){S.url=c.url||"";S.token=c.token;$("#login").classList.add("hidden");$("#app").classList.remove("hidden");$("#cfg-url").value=S.url;boot()}else{$("#login-url").value=location.origin}}
 init();
 </script>

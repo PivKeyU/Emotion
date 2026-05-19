@@ -160,7 +160,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 			"Id":                         m.UUID + "_",
 			"Path":                       "/" + m.UUID,
 			"Type":                       "Default",
-			"Container":                  "mkv",
+			"Container":                  mediaContainer(m.FileContainer),
 			"Size":                       m.FileSize,
 			"Name":                       m.Name,
 			"IsRemote":                   true,
@@ -198,6 +198,17 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 		})
 	}
 	return rows, nil
+}
+
+func mediaContainer(container string) string {
+	container = strings.TrimSpace(container)
+	if container == "" {
+		return "mkv"
+	}
+	if i := strings.Index(container, ","); i >= 0 {
+		return container[:i]
+	}
+	return container
 }
 
 // HasFavorite reports whether user has favorited (type, id).
@@ -266,6 +277,7 @@ func (t *Transform) itemInfoLibrary(ctx context.Context, numericID int64, itemID
 	if err != nil {
 		return nil, nil //nolint:nilerr
 	}
+	childCount, recursiveItemCount := t.libraryCounts(ctx, numericID)
 	item := map[string]any{
 		"Name":                  name,
 		"Id":                    itemID,
@@ -286,6 +298,8 @@ func (t *Transform) itemInfoLibrary(ctx context.Context, numericID int64, itemID
 		"PrimaryImageAspectRatio": 1.7,
 		"LockData":                true,
 		"ServerId":                t.cfg.EmbyID,
+		"ChildCount":              childCount,
+		"RecursiveItemCount":      recursiveItemCount,
 	}
 	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoLibrary, numericID, itemID, "", 0)
 	return item, nil
@@ -336,6 +350,7 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 	if isMovie {
 		mediaSources, _ = t.VideoMediaSources(ctx, numericID, 0, true, "", "")
 	}
+	size, bitrate, runtimeTicks, mediaStreams := summarizeMediaSources(mediaSources)
 
 	item := map[string]any{
 		"Name":                  title,
@@ -356,7 +371,7 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 		"Overview":              nullStr(description),
 		"Taglines":              []any{},
 		"Genres":                []any{},
-		"Size":                  0,
+		"Size":                  size,
 		"FileName":              title,
 		"ProductionYear":        yearOf(dateAir),
 		"RemoteTrailers":        []any{},
@@ -380,7 +395,9 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 		"RecursiveItemCount":   childCount,
 		"DisplayPreferencesId": itemID,
 		"AirDays":              []any{},
-		"MediaStreams":         []any{},
+		"MediaStreams":         mediaStreams,
+		"Bitrate":              bitrate,
+		"RunTimeTicks":         runtimeTicks,
 		"PartCount":            1,
 		"DisplayOrder":         "Aired",
 		"Chapters":             []any{},
@@ -506,6 +523,7 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 
 	uvr, _ := t.GetUserVideoRecord(ctx, userID, videoListID, numericID)
 	mediaSources, _ := t.VideoMediaSources(ctx, videoListID, numericID, true, "", "")
+	size, bitrate, runtimeTicks, mediaStreams := summarizeMediaSources(mediaSources)
 
 	seriesItemID := emby.ItemID(emby.ItemIDTypeVideoList, videoListID)
 	seasonItemID := emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID)
@@ -542,6 +560,10 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 		"TagItems":                []any{},
 		"ParentBackdropImageTags": []any{},
 		"LocalTrailerCount":       0,
+		"Size":                    size,
+		"Bitrate":                 bitrate,
+		"RunTimeTicks":            runtimeTicks,
+		"MediaStreams":            mediaStreams,
 		"UserData": map[string]any{
 			"PlayedPercentage":      uvr.Percentage,
 			"PlaybackPositionTicks": uvr.PlayMs,
@@ -564,6 +586,42 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 	}
 	t.applyImageFields(ctx, item, emby.ItemIDTypeVideoEpisode, numericID, itemID, seriesItemID, videoListID)
 	return item, nil
+}
+
+func summarizeMediaSources(sources []any) (size int64, bitrate int64, runtimeTicks int64, streams []any) {
+	streams = []any{}
+	for _, src := range sources {
+		m, ok := src.(map[string]any)
+		if !ok {
+			continue
+		}
+		if size == 0 {
+			size = anyInt64(m["Size"])
+		}
+		if bitrate == 0 {
+			bitrate = anyInt64(m["Bitrate"])
+		}
+		if runtimeTicks == 0 {
+			runtimeTicks = anyInt64(m["RunTimeTicks"])
+		}
+		if raw, ok := m["MediaStreams"].([]any); ok && len(raw) > 0 && len(streams) == 0 {
+			streams = raw
+		}
+	}
+	return
+}
+
+func anyInt64(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	case float64:
+		return int64(x)
+	default:
+		return 0
+	}
 }
 
 func (t *Transform) applyImageFields(ctx context.Context, item map[string]any, kind string, numericID int64, itemID, seriesItemID string, seriesID int64) {

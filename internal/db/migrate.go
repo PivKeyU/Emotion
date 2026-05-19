@@ -285,6 +285,28 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_pa_user ON playback_activity (user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_pa_date ON playback_activity (date_created)`,
+	`ALTER TABLE playback_activity ADD COLUMN IF NOT EXISTS remote_address VARCHAR(64)`,
+
+	`CREATE TABLE IF NOT EXISTS series_subscription (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		video_list_id BIGINT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		CONSTRAINT unx_series_subscription UNIQUE (user_id, video_list_id)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_subs_user ON series_subscription (user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_subs_series ON series_subscription (video_list_id)`,
+
+	`CREATE TABLE IF NOT EXISTS series_subscription_event (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		video_list_id BIGINT NOT NULL,
+		video_episode_id BIGINT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		delivered_at TIMESTAMPTZ NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_subev_pending ON series_subscription_event (delivered_at) WHERE delivered_at IS NULL`,
+	`CREATE INDEX IF NOT EXISTS idx_subev_user ON series_subscription_event (user_id)`,
 }
 
 // Migrate applies the schema. Safe to call every startup.

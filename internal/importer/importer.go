@@ -32,6 +32,10 @@ type Options struct {
 	FollowSymlinks bool
 	// DryRun prevents any DB writes; still produces a Report.
 	DryRun bool
+	// ProbeMedia runs ffprobe while importing. This is slower and should be
+	// reserved for small libraries or explicit rescans; large libraries can use
+	// the admin media probe job after fast import.
+	ProbeMedia bool
 	// Logger receives progress messages.
 	Logger *slog.Logger
 	// Progress receives coarse scanner/importer progress updates.
@@ -576,6 +580,16 @@ func (i *Importer) upsertEpisode(ctx context.Context, opts Options, bucket *DirF
 			return seasonIsNew, fmt.Errorf("episode insert: %w", insErr)
 		}
 		episodeID, _ = res.LastInsertId()
+
+		// Fan-out subscription events for all users following this series.
+		_, fanErr := i.db.ExecContext(ctx, `
+			INSERT INTO series_subscription_event (user_id, video_list_id, video_episode_id)
+			SELECT user_id, ?, ? FROM series_subscription WHERE video_list_id = ?
+			ON CONFLICT DO NOTHING
+		`, seriesListID, episodeID, seriesListID)
+		if fanErr != nil && i.log != nil {
+			i.log.Warn("subscription event fan-out failed", "series", seriesListID, "episode", episodeID, "err", fanErr)
+		}
 	} else if err != nil {
 		return seasonIsNew, err
 	} else {
@@ -667,6 +681,8 @@ func (i *Importer) upsertMedia(
 
 	// File size from disk for local or strm->local (best-effort).
 	var fileSize int64
+	var fileSecond int64
+	var fileMetadata []byte
 	if pathType == db.PathTypeLocal {
 		if info, err := os.Stat(pathURL); err == nil {
 			fileSize = info.Size()
@@ -675,6 +691,20 @@ func (i *Importer) upsertMedia(
 
 	name := filepath.Base(mediaPath)
 	container := strings.TrimPrefix(strings.ToLower(filepath.Ext(mediaPath)), ".")
+	if opts.ProbeMedia {
+		if probe, err := ProbeLocalMedia(ctx, pathURL); err == nil {
+			fileMetadata = probe.Metadata
+			fileSecond = probe.Duration
+			if fileSize == 0 && probe.Size > 0 {
+				fileSize = probe.Size
+			}
+			if probe.Container != "" {
+				container = probe.Container
+			}
+		} else if i.log != nil {
+			i.log.Debug("ffprobe media info unavailable", "category", "scan", "path", pathURL, "err", err)
+		}
+	}
 
 	// Look up existing media by path to make re-scans idempotent.
 	var existingID int64
@@ -689,6 +719,8 @@ func (i *Importer) upsertMedia(
 	nullSeason := nullableInt64(videoSeasonID)
 	nullEp := nullableInt64(videoEpisodeID)
 	fileSizeN := nullableInt64(fileSize)
+	fileSecondN := nullableInt64(fileSecond)
+	fileMetadataN := sql.NullString{Valid: len(fileMetadata) > 0, String: string(fileMetadata)}
 
 	mediaID := existingID
 	if errors.Is(err, sql.ErrNoRows) {
@@ -696,10 +728,10 @@ func (i *Importer) upsertMedia(
 		res, insErr := i.db.ExecContext(ctx, `
 			INSERT INTO video_media
 				(uuid, video_list_id, video_season_id, video_episode_id,
-				 name, status, file_size, file_container, path_type, path_url)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 name, status, file_size, file_second, file_matadata, file_container, path_type, path_url)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, uuid, videoListID, nullSeason, nullEp,
-			name, db.MediaStatusComplete, fileSizeN, container, pathType, pathURL)
+			name, db.MediaStatusComplete, fileSizeN, fileSecondN, fileMetadataN, container, pathType, pathURL)
 		if insErr != nil {
 			return fmt.Errorf("media insert: %w", insErr)
 		}
@@ -709,10 +741,10 @@ func (i *Importer) upsertMedia(
 	} else {
 		_, err := i.db.ExecContext(ctx, `
 			UPDATE video_media
-			SET name = ?, status = ?, file_size = ?, file_container = ?,
+			SET name = ?, status = ?, file_size = ?, file_second = ?, file_matadata = ?, file_container = ?,
 			    path_type = ?, path_url = ?, deleted_at = NULL
 			WHERE id = ?
-		`, name, db.MediaStatusComplete, fileSizeN, container, pathType, pathURL, existingID)
+		`, name, db.MediaStatusComplete, fileSizeN, fileSecondN, fileMetadataN, container, pathType, pathURL, existingID)
 		if err != nil {
 			return err
 		}
