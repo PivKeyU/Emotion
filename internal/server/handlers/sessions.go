@@ -190,6 +190,14 @@ type playingBody struct {
 	EventName     string `json:"eventname"`
 }
 
+type playingMediaInfo struct {
+	ID              int64 `json:"id"`
+	EffectiveSecond int64 `json:"effective_second"`
+	VideoListID     int64 `json:"video_list_id"`
+	VideoSeasonID   int64 `json:"video_season_id"`
+	VideoEpisodeID  int64 `json:"video_episode_id"`
+}
+
 // Playing records play / progress / stopped events.
 func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -226,47 +234,12 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 		mediaUUID = mediaUUID[:idx]
 	}
 	if mediaUUID == "" {
-		WriteStatus(w, http.StatusNoContent)
-		return
+		mediaUUID = s.lookupMediaUUID(ctx, kind, numericID)
 	}
-
-	var (
-		mediaID    int64
-		fileSecond db.NullInt64
-	)
-	cacheKey := "playing_media_" + mediaUUID
-	if cached, ok := s.cache.Get(ctx, cacheKey); ok {
-		var c struct {
-			ID         int64 `json:"id"`
-			FileSecond int64 `json:"file_second"`
-		}
-		_ = json.Unmarshal([]byte(cached), &c)
-		mediaID = c.ID
-		fileSecond.Valid = true
-		fileSecond.Int64 = c.FileSecond
-	} else {
-		err := s.db.QueryRowContext(ctx,
-			"SELECT id, file_second FROM video_media WHERE uuid = ? LIMIT 1", mediaUUID,
-		).Scan(&mediaID, &fileSecond)
-		if err == nil && mediaID > 0 {
-			payload, _ := json.Marshal(map[string]any{"id": mediaID, "file_second": fileSecond.Int64})
-			s.cache.Set(ctx, cacheKey, string(payload), time.Hour)
-		}
-	}
-	if mediaID == 0 {
+	media, ok := s.lookupPlayingMedia(ctx, mediaUUID)
+	if !ok {
 		WriteStatus(w, http.StatusUnprocessableEntity)
 		return
-	}
-
-	wheres := []string{"user_id = ?"}
-	args := []any{userID}
-	switch kind {
-	case emby.ItemIDTypeVideoList:
-		wheres = append(wheres, "video_list_id = ?")
-		args = append(args, numericID)
-	case emby.ItemIDTypeVideoEpisode:
-		wheres = append(wheres, "video_episode_id = ?")
-		args = append(args, numericID)
 	}
 
 	playSeconds := body.PositionTicks / emby.TicksPerSecond
@@ -274,17 +247,129 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 		playSeconds = 0
 	}
 	isComplete := false
-	if fileSecond.Valid && fileSecond.Int64 > 0 && fileSecond.Int64-playSeconds < 300 {
+	if media.EffectiveSecond > 0 && media.EffectiveSecond-playSeconds < 300 {
 		isComplete = true
 	}
 
-	stmt := "UPDATE user_video_record SET play_seconds = ?, video_media_id = ?, is_complete = ? WHERE " + strings.Join(wheres, " AND ")
-	fullArgs := append([]any{playSeconds, mediaID, isComplete}, args...)
-	_, _ = s.db.ExecContext(ctx, stmt, fullArgs...)
+	if err := s.upsertProgress(ctx, userID, kind, numericID, media, playSeconds, isComplete); err != nil {
+		s.log.Warn("progress upsert failed", "category", "session", "err", err)
+	}
 
 	s.trackEvent(ctx, &body, kind, numericID, userID)
 
 	WriteStatus(w, http.StatusNoContent)
+}
+
+func (s *Sessions) lookupMediaUUID(ctx context.Context, kind string, numericID int64) string {
+	var col string
+	switch kind {
+	case emby.ItemIDTypeVideoList:
+		col = "video_list_id"
+	case emby.ItemIDTypeVideoEpisode:
+		col = "video_episode_id"
+	default:
+		return ""
+	}
+	var uuid string
+	_ = s.db.QueryRowContext(ctx,
+		"SELECT uuid FROM video_media WHERE "+col+" = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1",
+		numericID,
+	).Scan(&uuid)
+	return uuid
+}
+
+func (s *Sessions) lookupPlayingMedia(ctx context.Context, mediaUUID string) (playingMediaInfo, bool) {
+	if strings.TrimSpace(mediaUUID) == "" {
+		return playingMediaInfo{}, false
+	}
+	cacheKey := "playing_media_" + mediaUUID
+	if cached, ok := s.cache.Get(ctx, cacheKey); ok {
+		var c playingMediaInfo
+		if err := json.Unmarshal([]byte(cached), &c); err == nil && c.ID > 0 {
+			return c, true
+		}
+	}
+
+	var m playingMediaInfo
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			vm.id,
+			COALESCE(NULLIF(vm.file_second, 0), ve.runtime * 60, vl.runtime * 60, 0) AS effective_second,
+			vm.video_list_id,
+			COALESCE(vm.video_season_id, 0),
+			COALESCE(vm.video_episode_id, 0)
+		FROM video_media vm
+		JOIN video_list vl ON vl.id = vm.video_list_id
+		LEFT JOIN video_episode ve ON ve.id = vm.video_episode_id
+		WHERE vm.uuid = ? AND vm.deleted_at IS NULL
+		LIMIT 1
+	`, mediaUUID).Scan(&m.ID, &m.EffectiveSecond, &m.VideoListID, &m.VideoSeasonID, &m.VideoEpisodeID)
+	if err != nil || m.ID <= 0 || m.VideoListID <= 0 {
+		return playingMediaInfo{}, false
+	}
+	payload, _ := json.Marshal(m)
+	s.cache.Set(ctx, cacheKey, string(payload), time.Hour)
+	return m, true
+}
+
+func (s *Sessions) upsertProgress(ctx context.Context, userID int64, kind string, numericID int64, media playingMediaInfo, playSeconds int64, isComplete bool) error {
+	videoListID := media.VideoListID
+	videoSeasonID := media.VideoSeasonID
+	videoEpisodeID := media.VideoEpisodeID
+
+	if kind == emby.ItemIDTypeVideoEpisode && videoEpisodeID == 0 {
+		videoEpisodeID = numericID
+		_ = s.db.QueryRowContext(ctx,
+			"SELECT video_list_id, COALESCE(video_season_id, 0) FROM video_episode WHERE id = ? LIMIT 1",
+			numericID,
+		).Scan(&videoListID, &videoSeasonID)
+	}
+	if videoListID <= 0 {
+		return nil
+	}
+
+	where := "user_id = ? AND video_list_id = ? AND video_episode_id IS NULL"
+	whereArgs := []any{userID, videoListID}
+	if videoEpisodeID > 0 {
+		where = "user_id = ? AND video_episode_id = ?"
+		whereArgs = []any{userID, videoEpisodeID}
+	}
+
+	updateArgs := []any{
+		videoListID,
+		nullableProgressID(videoSeasonID),
+		nullableProgressID(videoEpisodeID),
+		playSeconds,
+		media.ID,
+		isComplete,
+	}
+	updateArgs = append(updateArgs, whereArgs...)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE user_video_record
+		SET video_list_id = ?, video_season_id = ?, video_episode_id = ?,
+		    play_seconds = ?, video_media_id = ?, is_complete = ?, updated_at = NOW()
+		WHERE `+where, updateArgs...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO user_video_record
+			(video_list_id, video_season_id, video_episode_id, video_media_id,
+			 play_seconds, is_complete, user_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+	`, videoListID, nullableProgressID(videoSeasonID), nullableProgressID(videoEpisodeID),
+		media.ID, playSeconds, isComplete, userID)
+	return err
+}
+
+func nullableProgressID(v int64) db.NullInt64 {
+	if v <= 0 {
+		return db.NullInt64{}
+	}
+	return db.NullInt64{Valid: true, Int64: v}
 }
 
 // trackEvent updates the in-memory session for this client and, on stop,

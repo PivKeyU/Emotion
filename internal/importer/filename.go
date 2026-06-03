@@ -14,24 +14,20 @@ var (
 	reProviderTag = regexp.MustCompile(`(?i)\[(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[=\-:]\s*([a-z0-9]+)\]`)
 	// "Movie Title (2023)" or "Movie Title [2023]"
 	reTitleYear = regexp.MustCompile(`^(?P<title>.+?)[\s._]*[\(\[](?P<year>(19|20)\d{2})[\)\]]`)
-	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show.Name.1x02"
-	reSxxExx = regexp.MustCompile(`(?i)[Ss](\d{1,2})[\s._]*[Ee](\d{1,4})`)
+	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show Season 1 Episode 2" / "Show.Name.1x02"
+	reSxxExx = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:s|season[\s._\-]*)(\d{1,3})[\s._\-]*(?:episode|ep|e)[\s._\-]*(\d{1,4})(?:[\s._\-]|$)`)
 	reNxN    = regexp.MustCompile(`(?i)(?:^|[\s._\-])(\d{1,2})x(\d{1,4})(?:[\s._\-]|$)`)
 	// Chinese/Jellyfin-style episode markers: 第01集, 第 1 话, EP01, 01集.
-	reChineseEpisode = regexp.MustCompile(`(?i)(?:第|ep|episode|e)?[\s._\-]*(\d{1,4})[\s._\-]*(?:集|话|話)`)
+	reChineseEpisode    = regexp.MustCompile(`(?i)(?:第|ep|episode|e)?[\s._\-]*(\d{1,4})[\s._\-]*(?:集|话|話)`)
+	reChineseEpisodeNum = regexp.MustCompile(`第\s*([零〇一二两三四五六七八九十百]+)\s*(?:集|话|話)`)
 	// "Season 1" / "season01" / "第一季" / "第 1 季"
-	reSeasonWord    = regexp.MustCompile(`(?i)season[\s._\-]*(\d{1,3})`)
-	reSeasonChinese = regexp.MustCompile(`第\s*(\d{1,3})\s*[季部]`)
-	// Chinese number one through ten for 第X季
-	chineseSeasonMap = map[string]int{
-		"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-		"六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
-	}
-	reSeasonChineseNum = regexp.MustCompile(`第([一二三四五六七八九十])[季部]`)
+	reSeasonWord       = regexp.MustCompile(`(?i)season[\s._\-]*(\d{1,3})`)
+	reSeasonChinese    = regexp.MustCompile(`第\s*(\d{1,3})\s*[季部]`)
+	reSeasonChineseNum = regexp.MustCompile(`第\s*([零〇一二两三四五六七八九十百]+)\s*[季部]`)
+	// Explicit episode markers without a Chinese suffix: "EP02", "Episode 12", "E03".
+	reEpisodeMarker = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:episode|ep|e)[\s._\-]*(\d{1,4})(?:[\s._\-]|$)`)
 	// Episode-only fallback for flat drops like "01 - Episode Name.mkv", "EP02.mkv"
 	reEpisodeOnly = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:ep?|e|episode|集|第)?[\s._\-]*(\d{1,4})(?:\s|\.|_|-|集|$)`)
-	// "E01" alone
-	reJustE = regexp.MustCompile(`(?i)(?:^|[\s._\-])[Ee](\d{1,4})(?:[\s._\-]|$)`)
 )
 
 // ParsedName is the best-guess metadata from a filename or folder name.
@@ -72,7 +68,7 @@ func ParseSeasonFolder(folder string) int {
 		}
 	}
 	if m := reSeasonChineseNum.FindStringSubmatch(folder); len(m) == 2 {
-		if n, ok := chineseSeasonMap[m[1]]; ok {
+		if n, ok := parseChineseNumber(m[1]); ok {
 			return n
 		}
 	}
@@ -126,9 +122,9 @@ func parseBase(s string) ParsedName {
 	}
 
 	// 2. Explicit episode-only pattern: "E01", "EP01".
-	if m := reJustE.FindStringSubmatch(s); len(m) == 2 {
+	if m := reEpisodeMarker.FindStringSubmatch(s); len(m) == 2 {
 		p.Episode, _ = strconv.Atoi(m[1])
-		p.Title = cleanTitle(reJustE.Split(s, 2)[0])
+		p.Title = cleanTitle(reEpisodeMarker.Split(s, 2)[0])
 		p.Year = extractYear(s)
 		return p
 	}
@@ -137,6 +133,14 @@ func parseBase(s string) ParsedName {
 		p.Title = cleanTitle(reChineseEpisode.Split(s, 2)[0])
 		p.Year = extractYear(s)
 		return p
+	}
+	if m := reChineseEpisodeNum.FindStringSubmatch(s); len(m) == 2 {
+		if n, ok := parseChineseNumber(m[1]); ok {
+			p.Episode = n
+			p.Title = cleanTitle(reChineseEpisodeNum.Split(s, 2)[0])
+			p.Year = extractYear(s)
+			return p
+		}
 	}
 
 	// 3. Title (Year) — movie shape.
@@ -177,6 +181,71 @@ func extractYear(s string) int {
 		}
 	}
 	return 0
+}
+
+func parseChineseNumber(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	digit := func(r rune) (int, bool) {
+		switch r {
+		case '零', '〇':
+			return 0, true
+		case '一':
+			return 1, true
+		case '二', '两':
+			return 2, true
+		case '三':
+			return 3, true
+		case '四':
+			return 4, true
+		case '五':
+			return 5, true
+		case '六':
+			return 6, true
+		case '七':
+			return 7, true
+		case '八':
+			return 8, true
+		case '九':
+			return 9, true
+		}
+		return 0, false
+	}
+
+	total := 0
+	current := 0
+	seen := false
+	for _, r := range s {
+		switch r {
+		case '十':
+			if current == 0 {
+				current = 1
+			}
+			total += current * 10
+			current = 0
+			seen = true
+		case '百':
+			if current == 0 {
+				current = 1
+			}
+			total += current * 100
+			current = 0
+			seen = true
+		default:
+			n, ok := digit(r)
+			if !ok {
+				return 0, false
+			}
+			current = current*10 + n
+			seen = true
+		}
+	}
+	if !seen {
+		return 0, false
+	}
+	return total + current, true
 }
 
 // cleanTitle normalizes common separators into spaces and trims.

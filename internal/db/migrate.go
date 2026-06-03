@@ -109,6 +109,9 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_uvr_episode ON user_video_record (video_episode_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_uvr_media ON user_video_record (video_media_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_uvr_user ON user_video_record (user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_user_list_episode_updated ON user_video_record (user_id, video_list_id, video_episode_id, updated_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_user_episode_updated ON user_video_record (user_id, video_episode_id, updated_at DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_uvr_resume ON user_video_record (user_id, updated_at DESC) WHERE play_seconds IS NOT NULL AND COALESCE(is_complete, false) = false`,
 
 	`CREATE TABLE IF NOT EXISTS video_list (
 		id BIGSERIAL PRIMARY KEY,

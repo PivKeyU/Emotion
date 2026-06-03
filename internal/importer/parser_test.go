@@ -45,6 +45,27 @@ func TestParseFilename_JustE(t *testing.T) {
 	}
 }
 
+func TestParseFilename_EpisodeVariants(t *testing.T) {
+	tests := []struct {
+		in      string
+		season  int
+		episode int
+	}{
+		{"Show.Name.S01-E02.Title.mkv", 1, 2},
+		{"Show Name Season 2 Episode 12.mkv", 2, 12},
+		{"Show EP03 Title.mkv", 0, 3},
+		{"庆余年 第十一集.mkv", 0, 11},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			p := ParseFilename(tc.in)
+			if p.Season != tc.season || p.Episode != tc.episode {
+				t.Fatalf("parsed = S%dE%d, want S%dE%d (%+v)", p.Season, p.Episode, tc.season, tc.episode, p)
+			}
+		})
+	}
+}
+
 // TestParseFilename_ProviderTags covers Emby/Jellyfin folder conventions like
 // "A-安彦良和・板野一郎原画摄影集-2014-[tmdb=502419]" and variants.
 func TestParseFilename_ProviderTags(t *testing.T) {
@@ -90,6 +111,7 @@ func TestParseSeasonFolder(t *testing.T) {
 		"第一季":          1,
 		"第 2 季":        2,
 		"第10季":         10,
+		"第十二季":        12,
 		"Specials":     0,
 		"Not A Season": -1,
 	}

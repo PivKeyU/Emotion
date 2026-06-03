@@ -72,6 +72,7 @@ type Progress struct {
 	Processed  int    `json:"processed_dirs,omitempty"`
 	Total      int    `json:"total_dirs,omitempty"`
 	Report     Report `json:"report"`
+	Details    any    `json:"details,omitempty"`
 }
 
 // Importer coordinates scanning and DB upserts.
@@ -209,7 +210,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 			rep.Series++
 			rep.TouchedVideoListIDs = appendUnique(rep.TouchedVideoListIDs, series.id)
 			// Fallthrough: also process any episode files in this same dir.
-		} else if activeSeries != nil && !strings.HasPrefix(dirPath, activeSeries.rootPath) {
+		} else if activeSeries != nil && !pathWithin(dirPath, activeSeries.rootPath) {
 			// We walked past the active series root — drop it.
 			activeSeries = nil
 		}
@@ -407,11 +408,22 @@ func seriesHintForMedia(mediaPath string) ParsedName {
 // seriesRootFor yields the "root of this series" for tracking purposes.
 // For a file under "/lib/Show/Season 1/ep.mkv" we want "/lib/Show".
 // For "/lib/Show/ep.mkv" we want "/lib/Show".
-func seriesRootFor(dir string, season int) string {
-	if season > 0 && ParseSeasonFolder(filepath.Base(dir)) >= 0 {
+func seriesRootFor(dir string, _ int) string {
+	if ParseSeasonFolder(filepath.Base(dir)) >= 0 {
 		return filepath.Dir(dir)
 	}
 	return dir
+}
+
+func pathWithin(path, root string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 // ---------------- DB upserts ----------------

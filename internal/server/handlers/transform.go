@@ -265,7 +265,7 @@ func (t *Transform) GetUserVideoRecord(ctx context.Context, userID, videoListID,
 		query += " AND video_episode_id = ?"
 		args = append(args, videoEpisodeID)
 	}
-	query += " LIMIT 1"
+	query += " ORDER BY updated_at DESC LIMIT 1"
 
 	var (
 		playSeconds  db.NullInt64
@@ -288,8 +288,31 @@ func (t *Transform) GetUserVideoRecord(ctx context.Context, userID, videoListID,
 		).Scan(&fs)
 		fileSecond = fs.Int64
 	}
+	if fileSecond <= 0 {
+		fileSecond = t.runtimeSeconds(ctx, videoListID, videoEpisodeID)
+	}
 
 	return t.FormatUserVideoRecord(playSeconds.Int64, isComplete.Bool, fileSecond), nil
+}
+
+func (t *Transform) runtimeSeconds(ctx context.Context, videoListID, videoEpisodeID int64) int64 {
+	var minutes db.NullInt64
+	if videoEpisodeID > 0 {
+		_ = t.db.QueryRowContext(ctx, `
+			SELECT COALESCE(ve.runtime, vl.runtime)
+			FROM video_episode ve
+			JOIN video_list vl ON vl.id = ve.video_list_id
+			WHERE ve.id = ? LIMIT 1
+		`, videoEpisodeID).Scan(&minutes)
+	} else if videoListID > 0 {
+		_ = t.db.QueryRowContext(ctx,
+			"SELECT runtime FROM video_list WHERE id = ? LIMIT 1", videoListID,
+		).Scan(&minutes)
+	}
+	if minutes.Valid && minutes.Int64 > 0 {
+		return minutes.Int64 * 60
+	}
+	return 0
 }
 
 // GetUserLibrary returns the list of libraries (CollectionFolder) the user can see.
@@ -321,18 +344,38 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 	}
 	defer rows.Close()
 
-	var out []any
+	type libraryRow struct {
+		id   int64
+		name string
+		role string
+		root string
+	}
+	libraries := []libraryRow{}
+	libraryIDs := []int64{}
 	for rows.Next() {
-		var id int64
-		var name, role, root string
-		if err := rows.Scan(&id, &name, &role, &root); err != nil {
+		var row libraryRow
+		if err := rows.Scan(&row.id, &row.name, &row.role, &row.root); err != nil {
 			return nil, err
 		}
-		root = libraryRootOrFallback(name, root)
-		libID := emby.ItemID(emby.ItemIDTypeVideoLibrary, id)
-		childCount, recursiveItemCount := t.libraryCounts(ctx, id)
+		libraries = append(libraries, row)
+		libraryIDs = append(libraryIDs, row.id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	counts, err := t.libraryCountsByID(ctx, libraryIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []any
+	for _, row := range libraries {
+		root := libraryRootOrFallback(row.name, row.root)
+		libID := emby.ItemID(emby.ItemIDTypeVideoLibrary, row.id)
+		count := counts[row.id]
 		out = append(out, map[string]any{
-			"Name":                  name,
+			"Name":                  row.name,
 			"ServerId":              t.cfg.EmbyID,
 			"Id":                    libID,
 			"Guid":                  libID,
@@ -342,8 +385,8 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 			"CanDelete":             false,
 			"CanDownload":           false,
 			"PresentationUniqueKey": libID,
-			"SortName":              name,
-			"ForcedSortName":        name,
+			"SortName":              row.name,
+			"ForcedSortName":        row.name,
 			"ExternalUrls":          []any{},
 			"Taglines":              []any{},
 			"RemoteTrailers":        []any{},
@@ -351,15 +394,15 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 			"IsFolder":              true,
 			"ParentId":              "0",
 			"Type":                  "CollectionFolder",
-			"CollectionType":        embyCollectionType(role),
+			"CollectionType":        embyCollectionType(row.role),
 			"Path":                  root,
 			"UserData": map[string]any{
 				"PlaybackPositionTicks": 0,
 				"IsFavorite":            false,
 				"Played":                false,
 			},
-			"ChildCount":              childCount,
-			"RecursiveItemCount":      recursiveItemCount,
+			"ChildCount":              count.childCount,
+			"RecursiveItemCount":      count.recursiveItemCount,
 			"DisplayPreferencesId":    libID,
 			"PrimaryImageAspectRatio": 1,
 			"ImageTags": map[string]any{
@@ -370,7 +413,7 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 			"LockData":          false,
 		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (t *Transform) libraryCounts(ctx context.Context, libraryID int64) (childCount int64, recursiveItemCount int64) {
@@ -389,6 +432,76 @@ func (t *Transform) libraryCounts(ctx context.Context, libraryID int64) (childCo
 	).Scan(&recursiveItemCount)
 	recursiveItemCount += childCount
 	return childCount, recursiveItemCount
+}
+
+type libraryCount struct {
+	childCount         int64
+	recursiveItemCount int64
+}
+
+func (t *Transform) libraryCountsByID(ctx context.Context, libraryIDs []int64) (map[int64]libraryCount, error) {
+	out := map[int64]libraryCount{}
+	libraryIDs = uniquePositiveIDs(libraryIDs)
+	if len(libraryIDs) == 0 {
+		return out, nil
+	}
+
+	args := make([]any, 0, len(libraryIDs))
+	for _, id := range libraryIDs {
+		args = append(args, id)
+	}
+	rows, err := t.db.QueryContext(ctx, `
+		SELECT video_library_id, COUNT(*)
+		FROM video_list
+		WHERE deleted_at IS NULL
+		  AND video_library_id IN (`+placeholdersForIDs(libraryIDs)+`)
+		GROUP BY video_library_id`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var libraryID, count int64
+		if err := rows.Scan(&libraryID, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		current := out[libraryID]
+		current.childCount = count
+		current.recursiveItemCount = count
+		out[libraryID] = current
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	rows, err = t.db.QueryContext(ctx, `
+		SELECT vl.video_library_id, COUNT(*)
+		FROM video_episode ve
+		JOIN video_list vl ON vl.id = ve.video_list_id
+		WHERE vl.video_library_id IN (`+placeholdersForIDs(libraryIDs)+`)
+		  AND vl.deleted_at IS NULL
+		  AND ve.deleted_at IS NULL
+		GROUP BY vl.video_library_id`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var libraryID, episodeCount int64
+		if err := rows.Scan(&libraryID, &episodeCount); err != nil {
+			return nil, err
+		}
+		current := out[libraryID]
+		current.recursiveItemCount = current.childCount + episodeCount
+		out[libraryID] = current
+	}
+	return out, rows.Err()
 }
 
 func embyCollectionType(role string) string {
