@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/PivKeyU/Emotion/internal/db"
 	"github.com/PivKeyU/Emotion/internal/emby"
@@ -86,6 +88,16 @@ type batchItem struct {
 	title     string
 }
 
+var (
+	tmdbLeadingBracketRe = regexp.MustCompile(`^\s*[\[\(【（{][^\]\)】）}]{1,80}[\]\)】）}]\s*`)
+	tmdbTrailingNoiseRe  = regexp.MustCompile(`(?i)\s*[\[\(【（{][^\]\)】）}]*((1080|2160|720)p|4k|8k|hdr|web|bdrip|bluray|x264|x265|hevc|avc|aac|flac|简|繁|字幕|合集|全集|内封|外挂|[12][0-9]{3})[^\]\)】）}]*[\]\)】）}]\s*$`)
+	tmdbSeasonSuffixRe   = regexp.MustCompile(`(?i)\s*(第\s*[0-9一二三四五六七八九十百]+\s*[季期]|第\s*[0-9一二三四五六七八九十百]+\s*クール|season\s*\d+|s\d+|part\s*\d+|cour\s*\d+|\d+(st|nd|rd|th)\s*season)\s*$`)
+	tmdbYearTokenRe      = regexp.MustCompile(`\b(?:19|20)\d{2}\b`)
+	tmdbReleaseNoiseRe   = regexp.MustCompile(`(?i)\b(1080p|2160p|720p|4k|8k|hdr|web[-_. ]?dl|b[dr]rip|bluray|x264|x265|h264|h265|hevc|avc|aac|flac|gb|big5)\b|简繁|简体|繁体|字幕|合集|全集|内封|外挂|无修|NCOP|NCED`)
+	tmdbEmptyBracketRe   = regexp.MustCompile(`[\[\(【（{]\s*[\]\)】）}]`)
+	tmdbSpaceRe          = regexp.MustCompile(`[\s._\-+~:：/\\|]+`)
+)
+
 // ScrapeVideoList refreshes the metadata for a single video_list row.
 // When ForceOverride is true, existing non-null fields ARE overwritten.
 func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceOverride bool) (*ScrapeResult, error) {
@@ -116,7 +128,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 	res.Title = title
 
 	// Step 1: resolve a TMDB id.
-	resolvedID, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, title, yearOfTime(dateAir))
+	resolvedID, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, title, originTitle.String, yearOfTime(dateAir))
 	if err != nil {
 		res.Skipped = true
 		res.Reason = err.Error()
@@ -135,6 +147,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		if err != nil {
 			return nil, fmt.Errorf("get movie: %w", err)
 		}
+		s.fillMovieFallback(ctx, resolvedID, movie)
 		res.MatchedTitle = movie.Title
 		if err := s.applyMovie(ctx, videoListID, movie, res,
 			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
@@ -146,6 +159,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		if err != nil {
 			return nil, fmt.Errorf("get tv: %w", err)
 		}
+		s.fillTVFallback(ctx, resolvedID, show)
 		res.MatchedTitle = show.Name
 		if err := s.applyTV(ctx, videoListID, show, res,
 			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
@@ -158,17 +172,47 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 }
 
 // resolveTMDBID returns a TMDB id if existing or searched.
-func (s *Scraper) resolveTMDBID(ctx context.Context, videoType, existing, title string, year int) (int64, error) {
+func (s *Scraper) resolveTMDBID(ctx context.Context, videoType, existing, title, originTitle string, year int) (int64, error) {
 	if existing != "" {
 		if id, err := strconv.ParseInt(existing, 10, 64); err == nil && id > 0 {
 			return id, nil
 		}
 	}
-	if strings.TrimSpace(title) == "" {
+	candidates := tmdbTitleCandidates(title, originTitle)
+	if len(candidates) == 0 {
 		return 0, errors.New("title empty; cannot search")
 	}
 
-	// Try original title search.
+	for _, candidate := range candidates {
+		id, err := s.searchTMDBCandidate(ctx, videoType, candidate, year)
+		if err != nil {
+			return 0, err
+		}
+		if id > 0 {
+			return id, nil
+		}
+	}
+	return 0, nil
+}
+
+func (s *Scraper) searchTMDBCandidate(ctx context.Context, videoType, title string, year int) (int64, error) {
+	years := []int{year}
+	if year > 0 {
+		years = append(years, 0)
+	}
+	for _, searchYear := range years {
+		results, err := s.searchTMDB(ctx, videoType, title, searchYear)
+		if err != nil {
+			return 0, err
+		}
+		if len(results) > 0 {
+			return bestTMDBSearchResult(results, title, year).ID, nil
+		}
+	}
+	return 0, nil
+}
+
+func (s *Scraper) searchTMDB(ctx context.Context, videoType, title string, year int) ([]SearchResult, error) {
 	var (
 		results []SearchResult
 		err     error
@@ -179,14 +223,238 @@ func (s *Scraper) resolveTMDBID(ctx context.Context, videoType, existing, title 
 		results, err = s.client.SearchTV(ctx, title, year)
 	}
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
+	return results, nil
+}
 
-	if len(results) == 0 {
-		return 0, nil
+func (s *Scraper) fillMovieFallback(ctx context.Context, tmdbID int64, movie *Movie) {
+	if movie == nil || s.client == nil || strings.EqualFold(s.client.language, "en-US") {
+		return
 	}
-	// TMDB returns best-ranked first, take the top hit.
-	return results[0].ID, nil
+	if strings.TrimSpace(movie.Overview) != "" && strings.TrimSpace(movie.Tagline) != "" {
+		return
+	}
+	fallback, err := s.client.GetMovieWithLanguage(ctx, tmdbID, "en-US")
+	if err != nil || fallback == nil {
+		return
+	}
+	if strings.TrimSpace(movie.Overview) == "" {
+		movie.Overview = fallback.Overview
+	}
+	if strings.TrimSpace(movie.Tagline) == "" {
+		movie.Tagline = fallback.Tagline
+	}
+	if strings.TrimSpace(movie.Title) == "" {
+		movie.Title = fallback.Title
+	}
+	if strings.TrimSpace(movie.OriginalTitle) == "" {
+		movie.OriginalTitle = fallback.OriginalTitle
+	}
+	if strings.TrimSpace(movie.ReleaseDate) == "" {
+		movie.ReleaseDate = fallback.ReleaseDate
+	}
+}
+
+func (s *Scraper) fillTVFallback(ctx context.Context, tmdbID int64, show *TVShow) {
+	if show == nil || s.client == nil || strings.EqualFold(s.client.language, "en-US") {
+		return
+	}
+	if strings.TrimSpace(show.Overview) != "" && strings.TrimSpace(show.Tagline) != "" {
+		return
+	}
+	fallback, err := s.client.GetTVWithLanguage(ctx, tmdbID, "en-US")
+	if err != nil || fallback == nil {
+		return
+	}
+	if strings.TrimSpace(show.Overview) == "" {
+		show.Overview = fallback.Overview
+	}
+	if strings.TrimSpace(show.Tagline) == "" {
+		show.Tagline = fallback.Tagline
+	}
+	if strings.TrimSpace(show.Name) == "" {
+		show.Name = fallback.Name
+	}
+	if strings.TrimSpace(show.OriginalName) == "" {
+		show.OriginalName = fallback.OriginalName
+	}
+	if strings.TrimSpace(show.FirstAirDate) == "" {
+		show.FirstAirDate = fallback.FirstAirDate
+	}
+}
+
+func tmdbTitleCandidates(title, originTitle string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		key := normalizeTMDBTitle(v)
+		if key == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, v)
+	}
+	for _, raw := range []string{title, originTitle} {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		add(raw)
+		cleaned := cleanTMDBSearchTitle(raw)
+		add(cleaned)
+		add(stripTMDBSeasonSuffix(cleaned))
+		add(stripTMDBYear(cleaned))
+		add(stripTMDBSeasonSuffix(stripTMDBYear(cleaned)))
+	}
+	return out
+}
+
+func cleanTMDBSearchTitle(title string) string {
+	title = strings.TrimSpace(title)
+	for {
+		next := tmdbLeadingBracketRe.ReplaceAllString(title, "")
+		if next == title || strings.TrimSpace(next) == "" {
+			break
+		}
+		title = next
+	}
+	title = tmdbTrailingNoiseRe.ReplaceAllString(title, "")
+	title = tmdbReleaseNoiseRe.ReplaceAllString(title, " ")
+	title = tmdbEmptyBracketRe.ReplaceAllString(title, " ")
+	title = strings.Trim(title, " \t\r\n._-+~:：/\\|")
+	title = tmdbSpaceRe.ReplaceAllString(title, " ")
+	return strings.TrimSpace(title)
+}
+
+func stripTMDBSeasonSuffix(title string) string {
+	for {
+		next := strings.TrimSpace(tmdbSeasonSuffixRe.ReplaceAllString(title, ""))
+		if next == title || next == "" {
+			return strings.TrimSpace(title)
+		}
+		title = next
+	}
+}
+
+func stripTMDBYear(title string) string {
+	out := strings.TrimSpace(tmdbYearTokenRe.ReplaceAllString(title, ""))
+	out = tmdbSpaceRe.ReplaceAllString(out, " ")
+	return strings.TrimSpace(out)
+}
+
+func bestTMDBSearchResult(results []SearchResult, query string, year int) SearchResult {
+	best := results[0]
+	bestScore := tmdbSearchScore(best, query, year)
+	for _, candidate := range results[1:] {
+		score := tmdbSearchScore(candidate, query, year)
+		if score > bestScore || (score == bestScore && candidate.VoteAverage > best.VoteAverage) {
+			best = candidate
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func tmdbSearchScore(result SearchResult, query string, year int) int {
+	q := normalizeTMDBTitle(query)
+	score := 0
+	for _, title := range []string{result.Title, result.Name, result.OriginalTitle, result.OriginalName} {
+		t := normalizeTMDBTitle(title)
+		if t == "" || q == "" {
+			continue
+		}
+		switch {
+		case t == q:
+			score = max(score, 100)
+		case strings.Contains(t, q) || strings.Contains(q, t):
+			score = max(score, 80)
+		default:
+			score = max(score, tmdbTokenOverlapScore(q, t))
+		}
+	}
+	if year > 0 {
+		resultYear := tmdbResultYear(result)
+		if resultYear == year {
+			score += 20
+		} else if resultYear > 0 && absInt(resultYear-year) <= 1 {
+			score += 10
+		}
+	}
+	return score
+}
+
+func tmdbTokenOverlapScore(a, b string) int {
+	aa := strings.Fields(a)
+	bb := strings.Fields(b)
+	if len(aa) == 0 || len(bb) == 0 {
+		return 0
+	}
+	set := map[string]bool{}
+	for _, token := range aa {
+		set[token] = true
+	}
+	hit := 0
+	for _, token := range bb {
+		if set[token] {
+			hit++
+		}
+	}
+	if hit == 0 {
+		return 0
+	}
+	denom := len(aa)
+	if len(bb) > denom {
+		denom = len(bb)
+	}
+	return 60 * hit / denom
+}
+
+func normalizeTMDBTitle(title string) string {
+	title = strings.ToLower(strings.TrimSpace(title))
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range title {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func tmdbResultYear(result SearchResult) int {
+	if y := yearOfDateString(result.ReleaseDate); y > 0 {
+		return y
+	}
+	return yearOfDateString(result.FirstAirDate)
+}
+
+func yearOfDateString(raw string) int {
+	if len(raw) < 4 {
+		return 0
+	}
+	y, err := strconv.Atoi(raw[:4])
+	if err != nil {
+		return 0
+	}
+	return y
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // applyMovie writes TMDB fields onto video_list and video_image.

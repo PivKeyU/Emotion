@@ -214,8 +214,17 @@ type SearchResult struct {
 
 // GetMovie fetches /movie/{id}.
 func (c *Client) GetMovie(ctx context.Context, tmdbID int64) (*Movie, error) {
+	return c.GetMovieWithLanguage(ctx, tmdbID, "")
+}
+
+// GetMovieWithLanguage fetches /movie/{id} with an optional language override.
+func (c *Client) GetMovieWithLanguage(ctx context.Context, tmdbID int64, language string) (*Movie, error) {
 	var m Movie
-	if err := c.do(ctx, fmt.Sprintf("/movie/%d", tmdbID), nil, &m); err != nil {
+	q := url.Values{}
+	if strings.TrimSpace(language) != "" {
+		q.Set("language", language)
+	}
+	if err := c.do(ctx, fmt.Sprintf("/movie/%d", tmdbID), q, &m); err != nil {
 		return nil, err
 	}
 	return &m, nil
@@ -224,9 +233,17 @@ func (c *Client) GetMovie(ctx context.Context, tmdbID int64) (*Movie, error) {
 // GetTV fetches /tv/{id}. append_to_response=external_ids lets us grab IMDB/TVDB
 // with a single call.
 func (c *Client) GetTV(ctx context.Context, tmdbID int64) (*TVShow, error) {
+	return c.GetTVWithLanguage(ctx, tmdbID, "")
+}
+
+// GetTVWithLanguage fetches /tv/{id} with an optional language override.
+func (c *Client) GetTVWithLanguage(ctx context.Context, tmdbID int64, language string) (*TVShow, error) {
 	var t TVShow
 	q := url.Values{}
 	q.Set("append_to_response", "external_ids")
+	if strings.TrimSpace(language) != "" {
+		q.Set("language", language)
+	}
 	if err := c.do(ctx, fmt.Sprintf("/tv/%d", tmdbID), q, &t); err != nil {
 		return nil, err
 	}

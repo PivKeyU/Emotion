@@ -821,8 +821,51 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	queryArgs := append([]any{}, args...)
-	queryArgs = append(queryArgs, limit, offset)
+	queryArgs = append(queryArgs, limit, offset,
+		emby.ItemIDTypeVideoList, db.ImageTypePrimary, db.ImageTypeBackdrop)
 	rows, err := a.db.QueryContext(r.Context(), `
+		WITH page AS (
+			SELECT vl.id
+			FROM video_list vl
+			WHERE `+whereSQL+`
+			ORDER BY vl.updated_at DESC, vl.id DESC
+			LIMIT ? OFFSET ?
+		),
+		media_counts AS (
+			SELECT vm.video_list_id, COUNT(*) AS media_count
+			FROM video_media vm
+			WHERE vm.deleted_at IS NULL
+			  AND vm.video_list_id IN (SELECT id FROM page)
+			GROUP BY vm.video_list_id
+		),
+		season_counts AS (
+			SELECT vs.video_list_id, COUNT(*) AS season_count
+			FROM video_season vs
+			WHERE vs.deleted_at IS NULL
+			  AND vs.video_list_id IN (SELECT id FROM page)
+			GROUP BY vs.video_list_id
+		),
+		episode_counts AS (
+			SELECT ve.video_list_id, COUNT(*) AS episode_count
+			FROM video_episode ve
+			WHERE ve.deleted_at IS NULL
+			  AND ve.video_list_id IN (SELECT id FROM page)
+			GROUP BY ve.video_list_id
+		),
+		images AS (
+			SELECT
+				vi.relation_id,
+				COALESCE(MAX(CASE WHEN vi.type = 'Primary' THEN vi.path_type END), '') AS poster_type,
+				COALESCE(MAX(CASE WHEN vi.type = 'Primary' THEN vi.path_url END), '') AS poster_url,
+				COALESCE(MAX(CASE WHEN vi.type = 'Backdrop' THEN vi.path_type END), '') AS backdrop_type,
+				COALESCE(MAX(CASE WHEN vi.type = 'Backdrop' THEN vi.path_url END), '') AS backdrop_url
+			FROM video_image vi
+			WHERE vi.relation_type = ?
+			  AND vi.deleted_at IS NULL
+			  AND vi.type IN (?, ?)
+			  AND vi.relation_id IN (SELECT id FROM page)
+			GROUP BY vi.relation_id
+		)
 		SELECT
 			vl.id,
 			vl.video_library_id,
@@ -835,34 +878,21 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 			vl.date_air,
 			COALESCE(vl.runtime, 0),
 			vl.updated_at,
-			COUNT(DISTINCT vm.id) AS media_count,
-			COUNT(DISTINCT vs.id) AS season_count,
-			COUNT(DISTINCT ve.id) AS episode_count,
-			COALESCE(MAX(CASE WHEN vip.type = 'Primary' THEN vip.path_type END), '') AS poster_type,
-			COALESCE(MAX(CASE WHEN vip.type = 'Primary' THEN vip.path_url END), '') AS poster_url,
-			COALESCE(MAX(CASE WHEN vib.type = 'Backdrop' THEN vib.path_type END), '') AS backdrop_type,
-			COALESCE(MAX(CASE WHEN vib.type = 'Backdrop' THEN vib.path_url END), '') AS backdrop_url
-		FROM video_list vl
-		LEFT JOIN video_media vm
-			ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
-		LEFT JOIN video_season vs
-			ON vs.video_list_id = vl.id AND vs.deleted_at IS NULL
-		LEFT JOIN video_episode ve
-			ON ve.video_list_id = vl.id AND ve.deleted_at IS NULL
-		LEFT JOIN video_image vip
-			ON vip.relation_type = ? AND vip.relation_id = vl.id
-			AND vip.type = ? AND vip.deleted_at IS NULL
-		LEFT JOIN video_image vib
-			ON vib.relation_type = ? AND vib.relation_id = vl.id
-			AND vib.type = ? AND vib.deleted_at IS NULL
-		WHERE `+whereSQL+`
-		GROUP BY vl.id
-		ORDER BY vl.updated_at DESC, vl.id DESC
-		LIMIT ? OFFSET ?`,
-		append([]any{
-			emby.ItemIDTypeVideoList, db.ImageTypePrimary,
-			emby.ItemIDTypeVideoList, db.ImageTypeBackdrop,
-		}, queryArgs...)...,
+			COALESCE(mc.media_count, 0) AS media_count,
+			COALESCE(sc.season_count, 0) AS season_count,
+			COALESCE(ec.episode_count, 0) AS episode_count,
+			COALESCE(img.poster_type, '') AS poster_type,
+			COALESCE(img.poster_url, '') AS poster_url,
+			COALESCE(img.backdrop_type, '') AS backdrop_type,
+			COALESCE(img.backdrop_url, '') AS backdrop_url
+		FROM page p
+		JOIN video_list vl ON vl.id = p.id
+		LEFT JOIN media_counts mc ON mc.video_list_id = vl.id
+		LEFT JOIN season_counts sc ON sc.video_list_id = vl.id
+		LEFT JOIN episode_counts ec ON ec.video_list_id = vl.id
+		LEFT JOIN images img ON img.relation_id = vl.id
+		ORDER BY vl.updated_at DESC, vl.id DESC`,
+		queryArgs...,
 	)
 	if err != nil {
 		a.log.Error("admin media list failed", "err", err)
@@ -908,27 +938,28 @@ func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
 	}
 	whereSQL := strings.Join(where, " AND ")
 	row := a.db.QueryRowContext(r.Context(), `
+		WITH primary_images AS (
+			SELECT vi.relation_id
+			FROM video_image vi
+			WHERE vi.relation_type = ?
+			  AND vi.type = ?
+			  AND vi.deleted_at IS NULL
+			GROUP BY vi.relation_id
+		)
 		SELECT
 			COUNT(*) AS total,
 			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> '') AS scraped,
 			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') = '') AS unscraped,
-			COUNT(*) FILTER (WHERE NOT EXISTS (
-				SELECT 1 FROM video_image vi
-				WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
-				  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
-			)) AS missing_poster,
+			COUNT(*) FILTER (WHERE pi.relation_id IS NULL) AS missing_poster,
 			COUNT(*) FILTER (WHERE vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL) AS missing_info,
 			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> ''
 				AND COALESCE(vl.description, '') <> ''
 				AND vl.date_air IS NOT NULL
-				AND EXISTS (
-					SELECT 1 FROM video_image vi
-					WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
-					  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
-				)
+				AND pi.relation_id IS NOT NULL
 			) AS complete
 		FROM video_list vl
-		WHERE `+whereSQL, args...)
+		LEFT JOIN primary_images pi ON pi.relation_id = vl.id
+		WHERE `+whereSQL, append([]any{emby.ItemIDTypeVideoList, db.ImageTypePrimary}, args...)...)
 	var out AdminMediaStats
 	if err := row.Scan(&out.Total, &out.Scraped, &out.Unscraped, &out.MissingPoster, &out.MissingInfo, &out.Complete); err != nil {
 		a.log.Error("admin media stats failed", "err", err)
@@ -1112,7 +1143,13 @@ func (a *Admin) AdminMediaChildren(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
-	episodes, err := a.adminEpisodes(r, id)
+	episodeTotal, err := a.adminEpisodeTotal(r.Context(), id)
+	if err != nil {
+		a.log.Error("admin episode count failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	episodes, err := a.adminEpisodes(r, id, 60)
 	if err != nil {
 		a.log.Error("admin episodes failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -1126,10 +1163,11 @@ func (a *Admin) AdminMediaChildren(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"type":     videoType,
-		"seasons":  seasons,
-		"episodes": episodes,
-		"sources":  sources,
+		"type":          videoType,
+		"seasons":       seasons,
+		"episodes":      episodes,
+		"episode_total": episodeTotal,
+		"sources":       sources,
 	})
 }
 
@@ -1159,7 +1197,19 @@ func (a *Admin) adminSeasons(r *http.Request, videoListID int64) ([]adminMediaSe
 	return out, rows.Err()
 }
 
-func (a *Admin) adminEpisodes(r *http.Request, videoListID int64) ([]adminMediaEpisode, error) {
+func (a *Admin) adminEpisodeTotal(ctx context.Context, videoListID int64) (int64, error) {
+	var total int64
+	err := a.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM video_episode WHERE video_list_id = ? AND deleted_at IS NULL",
+		videoListID,
+	).Scan(&total)
+	return total, err
+}
+
+func (a *Admin) adminEpisodes(r *http.Request, videoListID int64, limit int) ([]adminMediaEpisode, error) {
+	if limit <= 0 {
+		limit = 60
+	}
 	rows, err := a.db.QueryContext(r.Context(), `
 		SELECT
 			ve.id,
@@ -1175,7 +1225,8 @@ func (a *Admin) adminEpisodes(r *http.Request, videoListID int64) ([]adminMediaE
 			ON vm.video_episode_id = ve.id AND vm.deleted_at IS NULL
 		WHERE ve.video_list_id = ? AND ve.deleted_at IS NULL
 		GROUP BY ve.id, ve.video_season_id, vs.season_number, ve.episode_number, ve.title
-		ORDER BY COALESCE(vs.season_number, 0), ve.episode_number, ve.id`, videoListID)
+		ORDER BY COALESCE(vs.season_number, 0), ve.episode_number, ve.id
+		LIMIT ?`, videoListID, limit)
 	if err != nil {
 		return nil, err
 	}

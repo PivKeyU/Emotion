@@ -139,6 +139,8 @@ var migrations = []string{
 	`CREATE INDEX IF NOT EXISTS idx_vl_date_air ON video_list (date_air)`,
 	`CREATE INDEX IF NOT EXISTS idx_vl_updated ON video_list (updated_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_vl_deleted ON video_list (deleted_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_library_updated_active ON video_list (video_library_id, deleted_at, updated_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_vl_library_type_updated_active ON video_list (video_library_id, video_type, deleted_at, updated_at DESC, id DESC)`,
 	`CREATE INDEX IF NOT EXISTS idx_vl_scan_title ON video_list (video_library_id, video_type, title) WHERE tmdb_id IS NULL`,
 
 	`CREATE TABLE IF NOT EXISTS video_list_title_alias (
@@ -167,6 +169,7 @@ var migrations = []string{
 		date_air DATE NULL,
 		CONSTRAINT unx_season UNIQUE (video_list_id, season_number)
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_vs_list_deleted ON video_season (video_list_id, deleted_at)`,
 
 	`CREATE TABLE IF NOT EXISTS video_episode (
 		id BIGSERIAL PRIMARY KEY,
@@ -183,6 +186,7 @@ var migrations = []string{
 		CONSTRAINT unx_episode UNIQUE (video_list_id, video_season_id, episode_number)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_ve_season ON video_episode (video_season_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_ve_list_deleted ON video_episode (video_list_id, deleted_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_ve_date_air ON video_episode (date_air)`,
 
 	`CREATE TABLE IF NOT EXISTS video_image (
@@ -225,6 +229,7 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_user ON video_media (user_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_list ON video_media (video_list_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_vm_list_deleted ON video_media (video_list_id, deleted_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_season ON video_media (video_season_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_episode ON video_media (video_episode_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_vm_path_url ON video_media (path_url)`,
