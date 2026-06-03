@@ -13,7 +13,6 @@ type MediaKind int
 const (
 	FileKindOther    MediaKind = iota
 	FileKindVideo              // .mkv .mp4 .m4v .ts .avi .mov .wmv .flv .webm
-	FileKindSTRM               // .strm
 	FileKindNFO                // .nfo
 	FileKindImage              // .jpg .jpeg .png .webp
 	FileKindSubtitle           // .srt .ass .vtt .ssa .sub
@@ -24,8 +23,6 @@ func classifyExt(path string) MediaKind {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".mkv", ".mp4", ".m4v", ".ts", ".avi", ".mov", ".wmv", ".flv", ".webm", ".iso", ".rmvb":
 		return FileKindVideo
-	case ".strm":
-		return FileKindSTRM
 	case ".nfo":
 		return FileKindNFO
 	case ".jpg", ".jpeg", ".png", ".webp":
@@ -36,14 +33,29 @@ func classifyExt(path string) MediaKind {
 	return FileKindOther
 }
 
+// IsLibraryFile reports whether a file is relevant to media library scanning.
+func IsLibraryFile(path string) bool {
+	return classifyExt(path) != FileKindOther
+}
+
 // DirFiles groups the interesting files inside one directory.
 type DirFiles struct {
 	Path      string
-	Dir       string   // basename of Path
-	Media     []string // full paths, video + strm (one entry per playable)
-	NFOs      []string // NFO files in this dir
-	Images    []string // image files
-	Subtitles []string // subtitle files
+	Dir       string           // basename of Path
+	Media     []string         // full paths, one entry per playable video file
+	NFOs      []string         // NFO files in this dir
+	Images    []string         // image files
+	Subtitles []string         // subtitle files
+	FileSizes map[string]int64 // optional sizes collected during traversal
+}
+
+// FileSize returns a size captured during Scan when CollectFileSize was enabled.
+func (d *DirFiles) FileSize(path string) (int64, bool) {
+	if d == nil || d.FileSizes == nil {
+		return 0, false
+	}
+	size, ok := d.FileSizes[path]
+	return size, ok
 }
 
 // ScanOptions controls directory traversal.
@@ -52,6 +64,12 @@ type ScanOptions struct {
 	Root string
 	// FollowSymlinks enables following symlinks during walk.
 	FollowSymlinks bool
+	// SkipHiddenDirs skips dot-prefixed directories before descending into them.
+	SkipHiddenDirs bool
+	// IgnoreDirNames skips directory basenames such as @eaDir or #recycle.
+	IgnoreDirNames []string
+	// CollectFileSize records sizes while the directory entry is hot in traversal.
+	CollectFileSize bool
 	// OnDir is called whenever the walker visits a directory.
 	OnDir func(path string, seen int)
 }
@@ -65,6 +83,7 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 	}
 	result := map[string]*DirFiles{}
 	dirsSeen := 0
+	ignoredDirs := ignoreDirNameSet(opts.IgnoreDirNames)
 
 	walkFn := func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -72,6 +91,9 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 			return nil
 		}
 		if d.IsDir() {
+			if path != root && shouldSkipScanDir(d.Name(), opts.SkipHiddenDirs, ignoredDirs) {
+				return filepath.SkipDir
+			}
 			dirsSeen++
 			if opts.OnDir != nil {
 				opts.OnDir(path, dirsSeen)
@@ -93,7 +115,7 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 			result[dir] = bucket
 		}
 		switch kind {
-		case FileKindVideo, FileKindSTRM:
+		case FileKindVideo:
 			bucket.Media = append(bucket.Media, path)
 		case FileKindNFO:
 			bucket.NFOs = append(bucket.NFOs, path)
@@ -101,6 +123,9 @@ func Scan(opts ScanOptions) (map[string]*DirFiles, error) {
 			bucket.Images = append(bucket.Images, path)
 		case FileKindSubtitle:
 			bucket.Subtitles = append(bucket.Subtitles, path)
+		}
+		if opts.CollectFileSize {
+			rememberFileSize(bucket, path, d)
 		}
 		return nil
 	}
@@ -146,6 +171,9 @@ func walkFollowSymlinks(root string, fn fs.WalkDirFunc, seen map[string]bool) er
 	for _, ent := range entries {
 		full := filepath.Join(root, ent.Name())
 		if err := fn(full, ent, nil); err != nil {
+			if err == filepath.SkipDir {
+				continue
+			}
 			return err
 		}
 		if ent.IsDir() {
@@ -160,4 +188,43 @@ func walkFollowSymlinks(root string, fn fs.WalkDirFunc, seen map[string]bool) er
 // readDir is a small helper wrapping os.ReadDir for symlink-following walks.
 func readDir(path string) ([]fs.DirEntry, error) {
 	return readDirOS(path)
+}
+
+func ignoreDirNameSet(names []string) map[string]struct{} {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			out[name] = struct{}{}
+		}
+	}
+	return out
+}
+
+func shouldSkipScanDir(name string, skipHidden bool, ignored map[string]struct{}) bool {
+	if skipHidden && strings.HasPrefix(name, ".") {
+		return true
+	}
+	if len(ignored) == 0 {
+		return false
+	}
+	_, ok := ignored[strings.ToLower(strings.TrimSpace(name))]
+	return ok
+}
+
+func rememberFileSize(bucket *DirFiles, path string, d fs.DirEntry) {
+	if bucket == nil || d == nil {
+		return
+	}
+	info, err := d.Info()
+	if err != nil || info.Size() <= 0 {
+		return
+	}
+	if bucket.FileSizes == nil {
+		bucket.FileSizes = map[string]int64{}
+	}
+	bucket.FileSizes[path] = info.Size()
 }

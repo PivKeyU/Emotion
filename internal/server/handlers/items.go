@@ -41,9 +41,8 @@ func NewItems(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logg
 	}
 }
 
-// Items handles GET /Items. MoviePilot and other automation tools call this
-// endpoint directly and expect a JSON envelope, so do not redirect to
-// /Users/{id}/Items here.
+// Items handles GET /Items and returns a JSON envelope instead of redirecting to
+// /Users/{id}/Items.
 func (i *Items) Items(w http.ResponseWriter, r *http.Request) {
 	userID := queryUserID(r)
 	if userID == 0 {
@@ -219,8 +218,8 @@ func (i *Items) Similar(w http.ResponseWriter, r *http.Request) {
 }
 
 // Image serves an item's image. Remote images (TMDB/Douban/URL) are proxied
-// through this server so clients that don't follow cross-origin 301 redirects
-// (e.g. MoviePilot's image cache) still receive the bytes directly.
+// through this server so clients that don't follow cross-origin redirects still
+// receive the bytes directly.
 func (i *Items) Image(w http.ResponseWriter, r *http.Request) {
 	itemIDStr := chi.URLParam(r, "itemId")
 	imageType := chi.URLParam(r, "imageType")

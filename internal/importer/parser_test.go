@@ -6,68 +6,6 @@ import (
 	"time"
 )
 
-// ---------- STRM ----------
-
-func TestParseSTRM_SingleURL(t *testing.T) {
-	s := ParseSTRMBytes([]byte("https://cdn.example.com/movie.mkv\n"))
-	if s.Primary != "https://cdn.example.com/movie.mkv" {
-		t.Fatalf("primary = %q", s.Primary)
-	}
-	if !s.IsURL {
-		t.Fatalf("expected URL")
-	}
-	if len(s.Targets) != 1 {
-		t.Fatalf("targets = %v", s.Targets)
-	}
-}
-
-func TestParseSTRM_SkipsCommentsAndBlankLines(t *testing.T) {
-	body := "# alias\nhttps://primary.example.com/a.mkv\r\n\n// fallback\nhttps://fallback.example.com/a.mkv\n"
-	s := ParseSTRMBytes([]byte(body))
-	if s.Primary != "https://primary.example.com/a.mkv" {
-		t.Fatalf("primary = %q", s.Primary)
-	}
-	if len(s.Targets) != 2 {
-		t.Fatalf("targets = %v", s.Targets)
-	}
-	if s.Targets[1] != "https://fallback.example.com/a.mkv" {
-		t.Fatalf("fallback = %q", s.Targets[1])
-	}
-}
-
-func TestParseSTRM_BOMStripped(t *testing.T) {
-	body := append([]byte{0xEF, 0xBB, 0xBF}, []byte("https://x.example.com/a.mkv")...)
-	s := ParseSTRMBytes(body)
-	if s.Primary != "https://x.example.com/a.mkv" {
-		t.Fatalf("primary = %q", s.Primary)
-	}
-}
-
-func TestParseSTRM_LocalAbsolutePath(t *testing.T) {
-	s := ParseSTRMBytes([]byte("/mnt/media/movie.mkv\n"))
-	if s.IsURL {
-		t.Fatalf("expected local path")
-	}
-	if s.Primary != "/mnt/media/movie.mkv" {
-		t.Fatalf("primary = %q", s.Primary)
-	}
-}
-
-func TestParseSTRM_WindowsDriveNotScheme(t *testing.T) {
-	// "c:/foo" should be parsed as a local path, not a URL.
-	s := ParseSTRMBytes([]byte("c:/videos/movie.mkv\n"))
-	if s.IsURL {
-		t.Fatalf("windows drive should not be treated as URL")
-	}
-}
-
-func TestParseSTRM_PluginURL(t *testing.T) {
-	s := ParseSTRMBytes([]byte("plugin://plugin.video.example/play?id=1\n"))
-	if !s.IsURL {
-		t.Fatalf("plugin:// should be URL")
-	}
-}
-
 // ---------- Filename ----------
 
 func TestParseFilename_TitleYear(t *testing.T) {

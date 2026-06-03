@@ -63,6 +63,8 @@ func (s *System) Info(w http.ResponseWriter, r *http.Request) {
 		"ServerName":          s.cfg.AppName,
 		"Version":             s.cfg.EmbyVersion,
 		"Id":                  s.cfg.EmbyID,
+		"StorageType":         s.cfg.StorageType,
+		"MediaProbeWorkers":   s.cfg.MediaProbeWorkers,
 	})
 }
 

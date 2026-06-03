@@ -23,9 +23,6 @@ func TestScan_EndToEnd(t *testing.T) {
 		"Shows/Game of Thrones/Season 1/got.s01e01.mkv": "fake",
 		"Shows/Game of Thrones/Season 1/got.s01e01.nfo": episodeNFOSample,
 		"Shows/Game of Thrones/Season 1/got.s01e02.mkv": "fake",
-
-		// A STRM-based movie.
-		"Movies/Cloud Movie/cloud-movie.strm": "https://cdn.example.com/cloud-movie.mkv\n",
 	}
 	for rel, content := range layout {
 		abs := filepath.Join(root, rel)
@@ -42,9 +39,9 @@ func TestScan_EndToEnd(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 
-	// Expect 4 directories of interest.
-	if got := len(dirs); got < 4 {
-		t.Fatalf("expected >=4 dirs, got %d: %v", got, dirs)
+	// Expect 3 directories of interest.
+	if got := len(dirs); got < 3 {
+		t.Fatalf("expected >=3 dirs, got %d: %v", got, dirs)
 	}
 
 	// Movie dir: should contain 1 media, 1 NFO, 1 image, 1 sub.
@@ -73,12 +70,47 @@ func TestScan_EndToEnd(t *testing.T) {
 		t.Fatalf("season media = %v", b.Media)
 	}
 
-	// STRM dir.
-	strmDir := filepath.Join(root, "Movies", "Cloud Movie")
-	if b, ok := dirs[strmDir]; !ok {
-		t.Fatalf("missing %s", strmDir)
-	} else if len(b.Media) != 1 {
-		t.Fatalf("strm media = %v", b.Media)
+}
+
+func TestScan_HDDOptionsSkipIgnoredDirsAndCollectSizes(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "Movies", "Visible", "visible.mkv")
+	hidden := filepath.Join(root, ".hidden", "hidden.mkv")
+	recycle := filepath.Join(root, "#recycle", "deleted.mkv")
+	for path, content := range map[string]string{
+		visible: "12345",
+		hidden:  "hidden",
+		recycle: "deleted",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	dirs, err := Scan(ScanOptions{
+		Root:            root,
+		SkipHiddenDirs:  true,
+		IgnoreDirNames:  []string{"#recycle"},
+		CollectFileSize: true,
+	})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if _, ok := dirs[filepath.Dir(hidden)]; ok {
+		t.Fatalf("hidden directory should have been skipped")
+	}
+	if _, ok := dirs[filepath.Dir(recycle)]; ok {
+		t.Fatalf("ignored directory should have been skipped")
+	}
+	bucket := dirs[filepath.Dir(visible)]
+	if bucket == nil {
+		t.Fatalf("missing visible directory")
+	}
+	if size, ok := bucket.FileSize(visible); !ok || size != 5 {
+		t.Fatalf("captured size = %d/%v, want 5/true", size, ok)
 	}
 }
 

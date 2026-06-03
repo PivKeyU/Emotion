@@ -29,9 +29,8 @@ func (d *Dashboard) Page(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(dashboardHTML)
 }
 
-// WebStub answers /web/index.html so Emby-style deep links (used by MoviePilot's
-// "open in server" button) don't 404. The page parses the hash fragment and
-// shows a minimal landing screen pointing at the admin UI.
+// WebStub answers /web/index.html so Emby-style deep links don't 404. The page
+// parses the hash fragment and shows a minimal landing screen pointing at the admin UI.
 func (d *Dashboard) WebStub(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")

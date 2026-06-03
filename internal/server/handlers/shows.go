@@ -232,7 +232,7 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{
 			"Name":                    e.title,
 			"SortName":                e.title,
-			"Path":                    "/.strm",
+			"Path":                    "/" + episodeItemID,
 			"ServerId":                s.cfg.EmbyID,
 			"Id":                      episodeItemID,
 			"CanDownload":             true,

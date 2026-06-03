@@ -36,6 +36,8 @@ type Options struct {
 	// reserved for small libraries or explicit rescans; large libraries can use
 	// the admin media probe job after fast import.
 	ProbeMedia bool
+	// OptimizeForHDD favors lower random IO for mechanical disks.
+	OptimizeForHDD bool
 	// Logger receives progress messages.
 	Logger *slog.Logger
 	// Progress receives coarse scanner/importer progress updates.
@@ -146,8 +148,11 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 	emitProgress("walking", opts.Root, 0, 0, 0)
 
 	dirs, err := Scan(ScanOptions{
-		Root:           opts.Root,
-		FollowSymlinks: opts.FollowSymlinks,
+		Root:            opts.Root,
+		FollowSymlinks:  opts.FollowSymlinks,
+		SkipHiddenDirs:  opts.OptimizeForHDD,
+		IgnoreDirNames:  ignoredDirNames(opts.OptimizeForHDD),
+		CollectFileSize: opts.OptimizeForHDD,
 		OnDir: func(path string, seen int) {
 			if seen == 1 || seen%100 == 0 {
 				emitProgress("walking", path, seen, 0, 0)
@@ -317,7 +322,7 @@ func (i *Importer) classifyMedia(mediaPath string, bucket *DirFiles, defaultType
 		c.parsed.Year = seriesHint.Year
 	}
 	// Title: prefer the series folder for episodes, otherwise parent folder for
-	// placeholder media names like "01.strm".
+	// placeholder media names like "01.mkv".
 	if c.parsed.IsEpisode() || c.parsed.Season > 0 || ParseSeasonFolder(filepath.Base(filepath.Dir(mediaPath))) >= 0 {
 		if seriesHint.Title != "" {
 			c.parsed.Title = seriesHint.Title
@@ -679,12 +684,14 @@ func (i *Importer) upsertMedia(
 		return err
 	}
 
-	// File size from disk for local or strm->local (best-effort).
+	// File size from disk for local files (best-effort).
 	var fileSize int64
 	var fileSecond int64
 	var fileMetadata []byte
 	if pathType == db.PathTypeLocal {
-		if info, err := os.Stat(pathURL); err == nil {
+		if size, ok := bucket.FileSize(mediaPath); ok && pathURL == mediaPath {
+			fileSize = size
+		} else if info, err := os.Stat(pathURL); err == nil {
 			fileSize = info.Size()
 		}
 	}
@@ -837,22 +844,8 @@ func (i *Importer) attachImage(ctx context.Context, opts Options, imgType, relTy
 
 // ---------------- helpers ----------------
 
-// resolveMediaPath returns (path_type, path_url, error) for a scanned file.
-// .strm is resolved to its first target (preserving URL vs local distinction).
+// resolveMediaPath returns (path_type, path_url, error) for a scanned local file.
 func resolveMediaPath(mediaPath string) (pathType, pathURL string, err error) {
-	if classifyExt(mediaPath) == FileKindSTRM {
-		s, err := ParseSTRM(mediaPath)
-		if err != nil {
-			return "", "", fmt.Errorf("parse strm %s: %w", mediaPath, err)
-		}
-		if s.Primary == "" {
-			return "", "", fmt.Errorf("empty strm %s", mediaPath)
-		}
-		if s.IsURL {
-			return db.PathTypeURL, s.Primary, nil
-		}
-		return db.PathTypeLocal, s.Primary, nil
-	}
 	return db.PathTypeLocal, mediaPath, nil
 }
 
@@ -908,7 +901,6 @@ func findNFOByRoot(paths []string, root string) *NFO {
 //
 //	foo.mkv + foo.nfo
 //	foo.mkv + foo.mkv.nfo
-//	foo.strm + foo.nfo
 //	(and a single movie.nfo in the dir when there's only one video)
 func findNFOForMedia(mediaPath string, nfos []string) *NFO {
 	baseNoExt := strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
@@ -972,4 +964,21 @@ func appendUnique(dst []int64, id int64) []int64 {
 		}
 	}
 	return append(dst, id)
+}
+
+func ignoredDirNames(optimizeForHDD bool) []string {
+	if !optimizeForHDD {
+		return nil
+	}
+	return []string{
+		"@eaDir",
+		"#recycle",
+		"@Recycle",
+		"@Recently-Snapshot",
+		".AppleDouble",
+		".Spotlight-V100",
+		".TemporaryItems",
+		".Trashes",
+		"System Volume Information",
+	}
 }

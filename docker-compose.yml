@@ -13,6 +13,7 @@ services:
     environment:
       APP_NAME: emotion
       APP_LOG_LEVEL: info
+      STORAGE_TYPE: hdd
 
       DB_DRIVER: postgres
       DB_HOST: postgres
@@ -20,12 +21,13 @@ services:
       DB_DATABASE: emotion
       DB_USERNAME: emotion
       DB_PASSWORD: emotion_pwd
-      DB_MAX_OPEN_CONNS: 100
-      DB_MAX_IDLE_CONNS: 25
+      DB_MAX_OPEN_CONNS: 30
+      DB_MAX_IDLE_CONNS: 10
       DB_CONN_MAX_LIFETIME_MINUTES: 30
-
-      VALKEY_HOST: valkey
-      VALKEY_PORT: 6379
+      MEDIA_PROBE_WORKERS: 2
+      MEDIA_PROBE_MAX_WORKERS: 4
+      WATCH_INTERVAL_SECONDS: 180
+      WATCH_MIN_INTERVAL_SECONDS: 60
 
       # API_KEY is the admin key used by Sakura_embyboss and other tools.
       API_KEY: ${API_KEY:-change-me-please}
@@ -52,7 +54,7 @@ services:
     command:
       - postgres
       - -c
-      - max_connections=200
+      - max_connections=80
       - -c
       - shared_buffers=256MB
       - -c
@@ -64,11 +66,5 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-
-  valkey:
-    image: valkey/valkey:7-alpine
-    restart: unless-stopped
-    command: ["valkey-server", "--save", "", "--appendonly", "no"]
-
 volumes:
   postgres-data:

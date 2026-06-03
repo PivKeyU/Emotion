@@ -44,8 +44,8 @@ func NewVideos(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Log
 // turn a DirectStreamUrl into a real HTTP source. We 302-redirect to whatever
 // URL is stored on the video_media row.
 //
-// The URL path looks like /Videos/{mediaUUID}/{mediaName} where mediaName can be
-// "original.strm", "original.mkv", etc. The name is ignored; only mediaUUID matters.
+// The URL path looks like /Videos/{mediaUUID}/{mediaName}. The name is ignored;
+// only mediaUUID matters.
 // mediaUUID may also be an emby item-id (e.g. vl-42), in which case we pick the
 // first associated media row.
 func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {

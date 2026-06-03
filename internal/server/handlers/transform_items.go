@@ -151,7 +151,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 
 		var directStreamURL any
 		if playSessionID != "" {
-			directStreamURL = fmt.Sprintf("/Videos/%s/original.strm?line=&api_key=%s", m.UUID, apiKey)
+			directStreamURL = fmt.Sprintf("/Videos/%s/original.%s?line=&api_key=%s", m.UUID, mediaContainer(m.FileContainer), apiKey)
 		}
 
 		item := map[string]any{

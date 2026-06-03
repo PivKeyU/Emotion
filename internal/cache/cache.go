@@ -1,14 +1,10 @@
-// Package cache provides a tiny key-value cache interface with an in-memory
-// implementation. A Valkey/Redis backend can be added later (the interface is
-// ready); for this build we ship memory-only to keep dependencies minimal.
+// Package cache provides a tiny in-memory key-value cache interface.
 package cache
 
 import (
 	"context"
 	"sync"
 	"time"
-
-	"github.com/PivKeyU/Emotion/internal/config"
 )
 
 // Cache is the minimal interface used by the server.
@@ -18,10 +14,8 @@ type Cache interface {
 	Delete(ctx context.Context, key string)
 }
 
-// New returns the default cache. Currently in-memory only.
-// Valkey/Redis is TODO - not critical since all call-sites are idempotent.
-func New(cfg *config.Config) Cache {
-	_ = cfg
+// New returns the default in-memory cache.
+func New() Cache {
 	return newMemoryCache()
 }
 

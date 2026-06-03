@@ -41,7 +41,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	cacheStore := cache.New(cfg)
+	cacheStore := cache.New()
 
 	deps := &server.Dependencies{
 		Config: cfg,

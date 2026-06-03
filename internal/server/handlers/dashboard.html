@@ -235,7 +235,7 @@ tbody tr:hover { background: var(--panel2); }
     </section>
 
     <section id="view-scanner" class="view hidden">
-      <h2>扫描</h2><p class="desc">可浏览容器内目录，扫描结果以数量和进度显示。</p>
+      <h2>扫描</h2><p class="desc">可浏览容器内目录，扫描结果以数量和进度显示。HDD 模式会降低随机 I/O 并跳过常见系统目录。</p>
       <div class="card">
         <div class="toolbar">
           <div class="col"><label>媒体库</label><select id="scan-lib"></select></div>
@@ -261,7 +261,7 @@ tbody tr:hover { background: var(--panel2); }
         <h3>媒体信息补全</h3>
         <div class="actions">
           <div class="col"><label>最大条目</label><input id="probe-max" type="number" value="0" style="width: 150px;"></div>
-          <div class="col"><label>并发数</label><input id="probe-workers" type="number" value="8" min="1" max="32" style="width: 150px;"></div>
+          <div class="col"><label>并发数(HDD 建议 1-2)</label><input id="probe-workers" type="number" value="2" min="1" max="32" style="width: 150px;"></div>
           <label class="switch" style="margin-top: 20px;"><input type="checkbox" id="probe-force"><span>重新探测已有信息</span></label>
           <span class="grow"></span>
           <button class="btn secondary" id="btn-probe" style="margin-top: 20px;">后台补全媒体信息</button>
@@ -384,7 +384,7 @@ function save(){localStorage.setItem(LS,JSON.stringify({url:S.url,token:S.token}
 function status(text,kind=""){const e=$("#status");e.className="pill "+kind;e.textContent=text}
 function show(v){$$(".nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===v));$$(".view").forEach(x=>x.classList.toggle("hidden",x.id!=="view-"+v));if(v==="libraries")loadLibraries();if(v==="scanner"){populateLibSelect();loadFiles(S.browsePath)}if(v==="tmdb")loadTMDB();if(v==="keys")loadKeys();if(v==="users")loadUsers()}
 async function login(){S.url=$("#login-url").value.trim();const key=$("#login-key").value.trim();$("#login-msg").textContent="登录中";try{const r=await fetch(base()+"/admin/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:key})});const d=await r.json().catch(()=>null);if(!r.ok)throw new Error((d&&d.message)||await r.text().catch(()=>r.statusText));S.token=d.token;save();$("#login").classList.add("hidden");$("#app").classList.remove("hidden");$("#cfg-url").value=S.url;await boot()}catch(e){$("#login-msg").textContent=e.message}}
-async function boot(){status("连接中","ok");try{const info=await api("GET","/System/Info");$("#server-info").innerHTML=Object.entries({名称:info.ServerName,版本:info.Version,ID:info.Id,地址:info.LocalAddress}).map(([k,v])=>`<div><span class=muted>${k}</span>: ${esc(v)}</div>`).join("");status(info.ServerName||"已连接","ok");await Promise.allSettled([loadCounts(),loadLibraries(),loadKeys()]);}catch(e){status("连接失败","bad");$("#server-info").textContent=e.message}}
+async function boot(){status("连接中","ok");try{const info=await api("GET","/System/Info");$("#server-info").innerHTML=Object.entries({名称:info.ServerName,版本:info.Version,ID:info.Id,地址:info.LocalAddress,存储:info.StorageType||"hdd",探测并发:info.MediaProbeWorkers||2}).map(([k,v])=>`<div><span class=muted>${k}</span>: ${esc(v)}</div>`).join("");status(info.ServerName||"已连接","ok");await Promise.allSettled([loadCounts(),loadLibraries(),loadKeys()]);}catch(e){status("连接失败","bad");$("#server-info").textContent=e.message}}
 async function loadCounts(){const c=await api("GET","/Items/Counts");$("#counts").innerHTML=[["电影",c.MovieCount],["剧集",c.SeriesCount],["集数",c.EpisodeCount],["媒体库",S.libs.length]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}
 async function loadLibraries(){try{S.libs=await api("GET","/admin/libraries");renderLibraries();populateLibSelect();await loadCounts()}catch(e){$("#library-grid").innerHTML=`<div class=muted>${esc(e.message)}</div>`}}
 function renderLibraries(){const g=$("#library-grid");if(!S.libs.length){g.innerHTML="<div class=muted>暂无媒体库</div>";return}g.innerHTML=S.libs.map(l=>`<div class=lib data-id="${l.id}"><div class=lib-head><div class=grow><div class=lib-title>${esc(l.name)}</div><div class="muted lib-path">${esc(l.root_path||"未设置路径")}</div></div><span class=pill>${esc(l.role||"auto")}</span></div><div class=stats style="margin:12px 0"><div class=stat><div class=k>电影</div><div class=v>${l.movie_count||0}</div></div><div class=stat><div class=k>剧集</div><div class=v>${l.series_count||0}</div></div><div class=stat><div class=k>集数</div><div class=v>${l.episode_count||0}</div></div></div><div class=row><button class="btn sm" data-act=open>打开</button><button class="btn sm secondary" data-act=scan>扫描</button><label class=switch><input type=checkbox data-act=watch ${l.watch_enabled?"checked":""}><span>监控</span></label><button class="btn sm bad" data-act=del>删除</button></div></div>`).join("")}

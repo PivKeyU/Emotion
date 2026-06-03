@@ -36,10 +36,8 @@ func NewRouter(deps *Dependencies) http.Handler {
 	r.Get("/web/index.html", dash.WebStub)
 
 	// Emby paths are accepted both with and without the "/emby" prefix so native
-	// clients and direct integrations both work. "/emby/emby" is tolerated for
-	// MoviePilot setups where the base URL already includes /emby while MP also
-	// appends emby/ for several endpoints.
-	for _, prefix := range []string{"/emby/emby", "/emby", ""} {
+	// clients and direct integrations both work.
+	for _, prefix := range []string{"/emby", ""} {
 		prefix := prefix
 
 		// --- public endpoints, no auth ---
@@ -119,9 +117,6 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	r.Get(prefix+"/Library/MediaFolders", lib.MediaFolders)
 	r.Get(prefix+"/Library/VirtualFolders/Query", lib.VirtualFoldersQuery)
 	r.Get(prefix+"/Library/VirtualFolders", lib.VirtualFolders)
-	r.Get(prefix+"/Library/SelectableMediaFolders", lib.SelectableMediaFolders)
-	r.Post(prefix+"/Library/Refresh", admin.EmbyLibraryRefresh)
-	r.Post(prefix+"/Library/Media/Updated", admin.EmbyLibraryRefresh)
 
 	// Items (top-level)
 	r.Get(prefix+"/Items", items.Items)
@@ -130,7 +125,6 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	r.Get(prefix+"/Items/{itemId}/Similar", items.Similar)
 	r.Get(prefix+"/Items/{itemId}/PlaybackInfo", items.PlaybackInfo)
 	r.Post(prefix+"/Items/{itemId}/PlaybackInfo", items.PlaybackInfo)
-	r.Post(prefix+"/Items/{itemId}/Refresh", admin.EmbyItemRefresh)
 
 	// Shows
 	r.Get(prefix+"/Shows/NextUp", shows.NextUp)

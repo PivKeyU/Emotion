@@ -543,7 +543,7 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	role := nullableString(strings.TrimSpace(body.Role))
 	root := nullableString(strings.TrimSpace(body.RootPath))
-	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
+	interval := a.normalizeWatchInterval(body.WatchIntervalSeconds)
 	res, err := a.db.ExecContext(r.Context(),
 		"INSERT INTO library (name, role, root_path, watch_enabled, watch_interval_seconds) VALUES (?, ?, ?, ?, ?)",
 		body.Name, role, root, body.WatchEnabled, interval)
@@ -600,7 +600,7 @@ func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
+	interval := a.normalizeWatchInterval(body.WatchIntervalSeconds)
 	_, err = a.db.ExecContext(r.Context(), `
 		UPDATE library
 		SET name = ?, role = ?, root_path = ?, watch_enabled = ?, watch_interval_seconds = ?, updated_at = NOW()
@@ -729,8 +729,10 @@ func (a *Admin) FilesBrowse(w http.ResponseWriter, r *http.Request) {
 		} else {
 			item.Type = "file"
 			item.Media = adminLooksMedia(ent.Name())
-			if info, err := ent.Info(); err == nil {
-				item.Size = info.Size()
+			if item.Media {
+				if info, err := ent.Info(); err == nil {
+					item.Size = info.Size()
+				}
 			}
 		}
 		out = append(out, item)
@@ -748,12 +750,7 @@ func (a *Admin) FilesBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminLooksMedia(name string) bool {
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mkv", ".mp4", ".m4v", ".ts", ".avi", ".mov", ".wmv", ".flv", ".webm", ".iso", ".rmvb",
-		".strm", ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".srt", ".ass", ".vtt", ".ssa", ".sub":
-		return true
-	}
-	return false
+	return importer.IsLibraryFile(name)
 }
 
 // AdminMediaList returns poster-ready media rows for the visual admin dashboard.
@@ -1482,12 +1479,18 @@ func nullableString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
 
-func normalizeWatchInterval(v int) int {
-	if v <= 0 {
-		return 30
+func (a *Admin) normalizeWatchInterval(v int) int {
+	def := 30
+	min := 5
+	if a != nil && a.cfg != nil {
+		def = a.cfg.WatchIntervalSeconds
+		min = a.cfg.WatchMinIntervalSeconds
 	}
-	if v < 5 {
-		return 5
+	if v <= 0 {
+		return def
+	}
+	if v < min {
+		return min
 	}
 	if v > 3600 {
 		return 3600
@@ -1521,19 +1524,6 @@ type scanJob struct {
 	Progress   importer.Progress `json:"progress"`
 	Result     any               `json:"result,omitempty"`
 	Error      string            `json:"error,omitempty"`
-}
-
-type embyRefreshRequest struct {
-	Recursive           bool     `json:"Recursive"`
-	ImageRefreshMode    string   `json:"ImageRefreshMode"`
-	MetadataRefreshMode string   `json:"MetadataRefreshMode"`
-	ReplaceAllImages    bool     `json:"ReplaceAllImages"`
-	ReplaceAllMetadata  bool     `json:"ReplaceAllMetadata"`
-	Paths               []string `json:"Paths"`
-	Updates             []struct {
-		Path       string `json:"Path"`
-		UpdateType string `json:"UpdateType"`
-	} `json:"Updates"`
 }
 
 // LibraryScan runs a synchronous import from a local directory.
@@ -1676,6 +1666,7 @@ func (a *Admin) LibraryScanStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(importer.Progress)) (any, error) {
+	optimizeForHDD := a.cfg != nil && a.cfg.OptimizeForHDD()
 	report, err := a.importer.Run(ctx, importer.Options{
 		LibraryID:      body.LibraryID,
 		Root:           body.Root,
@@ -1683,6 +1674,7 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 		FollowSymlinks: body.FollowSymlinks,
 		DryRun:         body.DryRun,
 		ProbeMedia:     body.ProbeMedia,
+		OptimizeForHDD: optimizeForHDD,
 		Logger:         a.log,
 		Progress:       progress,
 	})
@@ -1778,204 +1770,6 @@ func randomScanID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// EmbyLibraryRefresh accepts Emby/Jellyfin-style refresh requests used by
-// automation tools. It maps them to Emotion's existing async scan jobs.
-func (a *Admin) EmbyLibraryRefresh(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	var body embyRefreshRequest
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	defer r.Body.Close()
-
-	started := []any{}
-	for _, req := range a.refreshRequestsFromBody(r, body) {
-		job, err := a.startScanJob(req)
-		if err != nil {
-			a.log.Warn("emby refresh start failed", "err", err)
-			continue
-		}
-		started = append(started, job)
-	}
-	if len(started) == 0 {
-		WriteStatus(w, http.StatusNoContent)
-		return
-	}
-	WriteJSON(w, http.StatusAccepted, map[string]any{"Items": started, "TotalRecordCount": len(started)})
-}
-
-// EmbyItemRefresh refreshes one library or item by Emby item id.
-func (a *Admin) EmbyItemRefresh(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
-		return
-	}
-	itemID := chi.URLParam(r, "itemId")
-	if itemID == "" {
-		WriteStatus(w, http.StatusNotFound)
-		return
-	}
-	libraryID, root, role, ok := libraryRootForItem(r.Context(), a.db, itemID)
-	if !ok || libraryID <= 0 {
-		WriteStatus(w, http.StatusNotFound)
-		return
-	}
-	force := strings.EqualFold(r.URL.Query().Get("ReplaceAllMetadata"), "true")
-	if kind, numericID, parsed := emby.ParseItemID(itemID); parsed && kind == emby.ItemIDTypeVideoList {
-		if a.scraper != nil && a.scraper.Enabled() {
-			res, err := a.scraper.ScrapeVideoList(r.Context(), numericID, force)
-			if err == nil {
-				WriteJSON(w, http.StatusOK, res)
-				return
-			}
-			a.log.Warn("emby item tmdb refresh failed", "item_id", itemID, "err", err)
-		}
-	}
-	if strings.TrimSpace(root) == "" {
-		WriteStatus(w, http.StatusNoContent)
-		return
-	}
-	job, err := a.startScanJob(scanRequest{
-		LibraryID:   libraryID,
-		Root:        root,
-		DefaultType: role,
-		Scrape:      "on",
-	})
-	if err != nil {
-		WriteText(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	WriteJSON(w, http.StatusAccepted, job)
-}
-
-func (a *Admin) refreshRequestsFromBody(r *http.Request, body embyRefreshRequest) []scanRequest {
-	var paths []string
-	paths = append(paths, body.Paths...)
-	for _, u := range body.Updates {
-		if strings.TrimSpace(u.Path) != "" {
-			paths = append(paths, u.Path)
-		}
-	}
-	for _, key := range []string{"path", "Path"} {
-		if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
-			paths = append(paths, v)
-		}
-	}
-	for _, key := range []string{"ItemId", "itemId", "ParentId"} {
-		if v := strings.TrimSpace(r.URL.Query().Get(key)); v != "" {
-			if libID, root, role, ok := libraryRootForItem(r.Context(), a.db, v); ok && strings.TrimSpace(root) != "" {
-				return []scanRequest{{LibraryID: libID, Root: root, DefaultType: role, Scrape: "on"}}
-			}
-		}
-	}
-
-	type libRow struct {
-		id   int64
-		root string
-		role string
-	}
-	libraries := []libRow{}
-	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT id, COALESCE(root_path, ''), COALESCE(role, '')
-		FROM library
-		WHERE deleted_at IS NULL AND COALESCE(root_path, '') <> ''
-		ORDER BY id ASC`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var l libRow
-			if err := rows.Scan(&l.id, &l.root, &l.role); err == nil {
-				libraries = append(libraries, l)
-			}
-		}
-	}
-
-	out := []scanRequest{}
-	if len(paths) == 0 {
-		for _, l := range libraries {
-			out = append(out, scanRequest{LibraryID: l.id, Root: l.root, DefaultType: l.role, Scrape: "on"})
-		}
-		return out
-	}
-	seen := map[string]bool{}
-	for _, p := range paths {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		for _, l := range libraries {
-			if pathWithinRoot(p, l.root) {
-				key := strconv.FormatInt(l.id, 10) + "|" + p
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				out = append(out, scanRequest{LibraryID: l.id, Root: p, DefaultType: l.role, Scrape: "on"})
-				break
-			}
-		}
-	}
-	if len(out) == 0 {
-		for _, l := range libraries {
-			out = append(out, scanRequest{LibraryID: l.id, Root: l.root, DefaultType: l.role, Scrape: "on"})
-		}
-	}
-	return out
-}
-
-func (a *Admin) startScanJob(body scanRequest) (*scanJob, error) {
-	if err := a.hydrateScanRequest(context.Background(), &body); err != nil {
-		return nil, err
-	}
-	if _, err := os.Stat(body.Root); err != nil {
-		return nil, err
-	}
-	id := randomScanID()
-	job := &scanJob{
-		ID:        id,
-		Status:    "running",
-		StartedAt: time.Now(),
-		Progress: importer.Progress{
-			Stage:   "queued",
-			Current: body.Root,
-			Report:  importer.Report{StartedAt: time.Now()},
-		},
-	}
-	a.scanMu.Lock()
-	a.scanJobs[id] = job
-	a.scanMu.Unlock()
-	go func() {
-		result, err := a.runScanJob(context.Background(), body, func(p importer.Progress) {
-			a.updateScanJob(id, func(j *scanJob) { j.Progress = p })
-		})
-		a.updateScanJob(id, func(j *scanJob) {
-			j.FinishedAt = time.Now()
-			if err != nil {
-				j.Status = "failed"
-				j.Error = err.Error()
-				j.Progress.Stage = "failed"
-				return
-			}
-			j.Status = "done"
-			j.Result = result
-			j.Progress.Stage = "done"
-		})
-	}()
-	return job, nil
-}
-
-func pathWithinRoot(path, root string) bool {
-	path = filepath.Clean(path)
-	root = filepath.Clean(root)
-	if strings.EqualFold(path, root) {
-		return true
-	}
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel != "." && rel != "" && !strings.HasPrefix(rel, "..")
-}
-
 type watchRequest struct {
 	scanRequest
 	IntervalSeconds int `json:"interval_seconds"`
@@ -2023,13 +1817,7 @@ func (a *Admin) LibraryWatchStart(w http.ResponseWriter, r *http.Request) {
 		WriteText(w, http.StatusBadRequest, "library_id is required")
 		return
 	}
-	interval := body.IntervalSeconds
-	if interval <= 0 {
-		interval = 30
-	}
-	if interval < 5 {
-		interval = 5
-	}
+	interval := a.normalizeWatchInterval(body.IntervalSeconds)
 
 	if _, err := a.db.ExecContext(r.Context(), `
 		UPDATE library
@@ -2115,13 +1903,13 @@ func (a *Admin) startConfiguredWatchers() {
 			continue
 		}
 		if info, err := os.Stat(root); err == nil && info.IsDir() {
-			a.startLibraryWatcher(context.Background(), id, root, role, normalizeWatchInterval(interval))
+			a.startLibraryWatcher(context.Background(), id, root, role, a.normalizeWatchInterval(interval))
 		}
 	}
 }
 
 func (a *Admin) startLibraryWatcher(ctx context.Context, libraryID int64, root, defaultType string, interval int) *watchJob {
-	interval = normalizeWatchInterval(interval)
+	interval = a.normalizeWatchInterval(interval)
 	a.stopWatchByLibrary(libraryID)
 	id := randomScanID()
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -2284,13 +2072,7 @@ func directorySnapshot(root string) (string, error) {
 		if d.IsDir() || strings.HasPrefix(d.Name(), ".") {
 			return nil
 		}
-		kind := importer.FileKindOther
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".mkv", ".mp4", ".m4v", ".ts", ".avi", ".mov", ".wmv", ".flv", ".webm", ".iso", ".rmvb",
-			".strm", ".nfo", ".jpg", ".jpeg", ".png", ".webp", ".srt", ".ass", ".vtt", ".ssa", ".sub":
-			kind = 1
-		}
-		if kind == importer.FileKindOther {
+		if !importer.IsLibraryFile(path) {
 			return nil
 		}
 		info, err := d.Info()
@@ -2460,16 +2242,7 @@ func (a *Admin) runMediaProbeJob(ctx context.Context, body mediaProbeRequest, pr
 		return p, nil
 	}
 
-	workers := body.Workers
-	if workers <= 0 {
-		workers = 8
-	}
-	if workers > 32 {
-		workers = 32
-	}
-	if workers > len(items) {
-		workers = len(items)
-	}
+	workers := a.mediaProbeWorkers(body.Workers, len(items))
 
 	jobs := make(chan mediaProbeItem)
 	results := make(chan struct {
@@ -2539,8 +2312,8 @@ func (a *Admin) runMediaProbeJob(ctx context.Context, body mediaProbeRequest, pr
 }
 
 func (a *Admin) mediaProbeItems(ctx context.Context, body mediaProbeRequest) ([]mediaProbeItem, error) {
-	where := []string{"vm.deleted_at IS NULL", "COALESCE(vm.path_url, '') <> ''"}
-	args := []any{}
+	where := []string{"vm.deleted_at IS NULL", "COALESCE(vm.path_url, '') <> ''", "vm.path_type = ?"}
+	args := []any{db.PathTypeLocal}
 	if body.LibraryID > 0 {
 		where = append(where, "vl.video_library_id = ?")
 		args = append(args, body.LibraryID)
@@ -2553,12 +2326,16 @@ func (a *Admin) mediaProbeItems(ctx context.Context, body mediaProbeRequest) ([]
 		limitSQL = " LIMIT ?"
 		args = append(args, body.Max)
 	}
+	orderSQL := "vm.id ASC"
+	if a.cfg != nil && a.cfg.OptimizeForHDD() {
+		orderSQL = "vm.path_url ASC, vm.id ASC"
+	}
 	rows, err := a.db.QueryContext(ctx, `
 		SELECT vm.id, vm.path_url
 		FROM video_media vm
 		JOIN video_list vl ON vl.id = vm.video_list_id
 		WHERE `+strings.Join(where, " AND ")+`
-		ORDER BY vm.id ASC`+limitSQL, args...)
+		ORDER BY `+orderSQL+limitSQL, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2572,6 +2349,31 @@ func (a *Admin) mediaProbeItems(ctx context.Context, body mediaProbeRequest) ([]
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+func (a *Admin) mediaProbeWorkers(requested, total int) int {
+	workers := 8
+	maxWorkers := 32
+	if a != nil && a.cfg != nil {
+		workers = a.cfg.MediaProbeWorkers
+		maxWorkers = a.cfg.MediaProbeMaxWorkers
+	}
+	if requested > 0 {
+		workers = requested
+	}
+	if maxWorkers < 1 {
+		maxWorkers = 1
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	if workers > maxWorkers {
+		workers = maxWorkers
+	}
+	if total > 0 && workers > total {
+		workers = total
+	}
+	return workers
 }
 
 func (a *Admin) probeOneMedia(ctx context.Context, item mediaProbeItem) error {
