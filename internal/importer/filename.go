@@ -15,14 +15,14 @@ var (
 	// "Movie Title (2023)" or "Movie Title [2023]"
 	reTitleYear = regexp.MustCompile(`^(?P<title>.+?)[\s._]*[\(\[](?P<year>(19|20)\d{2})[\)\]]`)
 	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show Season 1 Episode 2" / "Show.Name.1x02"
-	reSxxExx = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:s|season[\s._\-]*)(\d{1,3})[\s._\-]*(?:episode|ep|e)(\d{1,4})(?:[\s._\-]|$)`)
+	reSxxExx = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:s|season[\s._\-]*)(\d{1,3})[\s._\-]*(?:episode|ep|e)[\s._\-]*(\d{1,4})(?:[\s._\-]|$)`)
 	reNxN    = regexp.MustCompile(`(?i)(?:^|[\s._\-])(\d{1,2})x(\d{1,4})(?:[\s._\-]|$)`)
 	// Chinese/Jellyfin-style episode markers: 第01集, 第 1 话, EP01, 01集.
-	reChineseEpisode = regexp.MustCompile(`(?i)(?:第|ep|episode|e)?[\s._\-]*(\d{1,4})[\s._\-]*(?:集|话|話)`)
+	reChineseEpisode    = regexp.MustCompile(`(?i)(?:第|ep|episode|e)?[\s._\-]*(\d{1,4})[\s._\-]*(?:集|话|話)`)
 	reChineseEpisodeNum = regexp.MustCompile(`第\s*([零〇一二两三四五六七八九十百]+)\s*(?:集|话|話)`)
 	// "Season 1" / "season01" / "第一季" / "第 1 季"
-	reSeasonWord    = regexp.MustCompile(`(?i)season[\s._\-]*(\d{1,3})`)
-	reSeasonChinese = regexp.MustCompile(`第\s*(\d{1,3})\s*[季部]`)
+	reSeasonWord       = regexp.MustCompile(`(?i)season[\s._\-]*(\d{1,3})`)
+	reSeasonChinese    = regexp.MustCompile(`第\s*(\d{1,3})\s*[季部]`)
 	reSeasonChineseNum = regexp.MustCompile(`第\s*([零〇一二两三四五六七八九十百]+)\s*[季部]`)
 	// Explicit episode markers without a Chinese suffix: "EP02", "Episode 12", "E03".
 	reEpisodeMarker = regexp.MustCompile(`(?i)(?:^|[\s._\-])(?:episode|ep|e)[\s._\-]*(\d{1,4})(?:[\s._\-]|$)`)

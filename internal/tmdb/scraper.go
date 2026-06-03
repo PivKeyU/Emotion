@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,14 +59,16 @@ type ScrapeResult struct {
 
 // BatchResult aggregates ScrapeResult for a bulk run.
 type BatchResult struct {
-	Total     int            `json:"total"`
-	Processed int            `json:"processed"`
-	Matched   int            `json:"matched"`
-	Skipped   int            `json:"skipped"`
-	Failed    int            `json:"failed"`
-	Duration  int64          `json:"duration_ms"`
-	Errors    []string       `json:"errors,omitempty"`
-	Items     []ScrapeResult `json:"items,omitempty"`
+	Total       int            `json:"total"`
+	Processed   int            `json:"processed"`
+	Active      int            `json:"active"`
+	Matched     int            `json:"matched"`
+	Skipped     int            `json:"skipped"`
+	Failed      int            `json:"failed"`
+	Duration    int64          `json:"duration_ms"`
+	Errors      []string       `json:"errors,omitempty"`
+	ActiveItems []ScrapeResult `json:"active_items,omitempty"`
+	Items       []ScrapeResult `json:"items,omitempty"`
 }
 
 type ScrapeMissingOptions struct {
@@ -650,7 +653,7 @@ func missingPosterSQL() string {
 func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, rep *BatchResult, progress func(BatchResult)) {
 	const workers = 8
 	jobs := make(chan batchItem)
-	results := make(chan ScrapeResult)
+	events := make(chan scrapeBatchEvent)
 	rep.Total = len(ids)
 	if progress != nil {
 		progress(*rep)
@@ -666,28 +669,30 @@ func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, 
 		go func() {
 			defer wg.Done()
 			for item := range jobs {
+				started := item
+				events <- scrapeBatchEvent{Started: &started}
 				res, err := s.ScrapeVideoList(ctx, item.id, force)
 				if err != nil {
-					results <- ScrapeResult{
+					events <- scrapeBatchEvent{Result: &ScrapeResult{
 						VideoListID: item.id,
 						VideoType:   item.videoType,
 						Title:       item.title,
 						Failed:      true,
 						Reason:      err.Error(),
-					}
+					}}
 					continue
 				}
 				if res == nil {
-					results <- ScrapeResult{
+					events <- scrapeBatchEvent{Result: &ScrapeResult{
 						VideoListID: item.id,
 						VideoType:   item.videoType,
 						Title:       item.title,
 						Skipped:     true,
 						Reason:      "empty result",
-					}
+					}}
 					continue
 				}
-				results <- *res
+				events <- scrapeBatchEvent{Result: res}
 			}
 		}()
 	}
@@ -703,10 +708,29 @@ func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, 
 	}()
 	go func() {
 		wg.Wait()
-		close(results)
+		close(events)
 	}()
 
-	for res := range results {
+	active := map[int64]ScrapeResult{}
+	for event := range events {
+		if event.Started != nil {
+			active[event.Started.id] = ScrapeResult{
+				VideoListID: event.Started.id,
+				VideoType:   event.Started.videoType,
+				Title:       event.Started.title,
+			}
+			rep.ActiveItems = activeScrapeItems(active)
+			rep.Active = len(rep.ActiveItems)
+			if progress != nil {
+				progress(*rep)
+			}
+			continue
+		}
+		if event.Result == nil {
+			continue
+		}
+		res := *event.Result
+		delete(active, res.VideoListID)
 		rep.Processed++
 		if res.Failed {
 			rep.Failed++
@@ -717,6 +741,8 @@ func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, 
 			rep.Matched++
 		}
 		rep.Items = append(rep.Items, res)
+		rep.ActiveItems = activeScrapeItems(active)
+		rep.Active = len(rep.ActiveItems)
 		if progress != nil {
 			progress(*rep)
 		}
@@ -727,4 +753,21 @@ func (s *Scraper) scrapeBatch(ctx context.Context, ids []batchItem, force bool, 
 			progress(*rep)
 		}
 	}
+}
+
+type scrapeBatchEvent struct {
+	Started *batchItem
+	Result  *ScrapeResult
+}
+
+func activeScrapeItems(active map[int64]ScrapeResult) []ScrapeResult {
+	if len(active) == 0 {
+		return nil
+	}
+	out := make([]ScrapeResult, 0, len(active))
+	for _, item := range active {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].VideoListID < out[j].VideoListID })
+	return out
 }

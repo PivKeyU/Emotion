@@ -70,6 +70,7 @@ type Progress struct {
 	Processed  int    `json:"processed_dirs,omitempty"`
 	Total      int    `json:"total_dirs,omitempty"`
 	Report     Report `json:"report"`
+	Details    any    `json:"details,omitempty"`
 }
 
 // Importer coordinates scanning and DB upserts.

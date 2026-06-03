@@ -201,33 +201,51 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 	}
 	defer rows.Close()
 
-	items := []any{}
+	type listRow struct {
+		id        int64
+		tmdbID    db.NullString
+		videoType string
+		title     string
+		dateAir   sql.NullTime
+		createdAt time.Time
+	}
+	listRows := []listRow{}
+	listIDs := []int64{}
 	for rows.Next() {
-		var (
-			id        int64
-			tmdbID    db.NullString
-			videoType string
-			title     string
-			dateAir   sql.NullTime
-			createdAt time.Time
-		)
-		if err := rows.Scan(&id, &tmdbID, &videoType, &title, &dateAir, &createdAt); err != nil {
+		var row listRow
+		if err := rows.Scan(&row.id, &row.tmdbID, &row.videoType, &row.title, &row.dateAir, &row.createdAt); err != nil {
 			return VideoListResult{}, err
 		}
-		isMovie := videoType == db.VideoTypeMovie
-		rowID := emby.ItemID(emby.ItemIDTypeVideoList, id)
+		listRows = append(listRows, row)
+		listIDs = append(listIDs, row.id)
+	}
+	if err := rows.Err(); err != nil {
+		return VideoListResult{}, err
+	}
+
+	images, err := t.loadImagePresence(ctx, map[string][]int64{
+		emby.ItemIDTypeVideoList: listIDs,
+	})
+	if err != nil {
+		return VideoListResult{}, err
+	}
+
+	items := make([]any, 0, len(listRows))
+	for _, row := range listRows {
+		isMovie := row.videoType == db.VideoTypeMovie
+		rowID := emby.ItemID(emby.ItemIDTypeVideoList, row.id)
 		item := map[string]any{
-			"Name":           title,
+			"Name":           row.title,
 			"ServerId":       t.cfg.EmbyID,
 			"Id":             rowID,
-			"DateCreated":    emby.FormatTime(createdAt),
+			"DateCreated":    emby.FormatTime(row.createdAt),
 			"Path":           "/.strm",
 			"Genres":         []any{},
 			"People":         []any{},
 			"GenreItems":     []any{},
-			"ProductionYear": yearOf(dateAir),
+			"ProductionYear": yearOf(row.dateAir),
 			"ProviderIds": map[string]any{
-				"Tmdb": tmdbID.String,
+				"Tmdb": row.tmdbID.String,
 			},
 			"IsFolder": !isMovie,
 			"Type":     typeOfVideo(isMovie),
@@ -242,11 +260,8 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 			"CanDelete":               false,
 			"CanDownload":             false,
 		}
-		t.applyImageFields(ctx, item, emby.ItemIDTypeVideoList, id, rowID, "", 0)
+		t.applyImageFieldsWithPresence(ctx, item, emby.ItemIDTypeVideoList, row.id, rowID, "", 0, images)
 		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return VideoListResult{}, err
 	}
 	return VideoListResult{Items: items, Count: total}, nil
 }

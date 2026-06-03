@@ -1700,9 +1700,11 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 					return
 				}
 				current := ""
-				if len(p.Items) > 0 {
+				if len(p.ActiveItems) > 0 {
+					current = "正在刮削 " + scrapeResultLabel(p.ActiveItems[0])
+				} else if len(p.Items) > 0 {
 					last := p.Items[len(p.Items)-1]
-					current = fmt.Sprintf("%s #%d", strings.TrimSpace(last.Title), last.VideoListID)
+					current = scrapeResultLabel(last)
 					if last.Failed {
 						current += ": " + last.Reason
 					} else if last.Skipped {
@@ -1718,6 +1720,9 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 					Processed:  p.Processed,
 					Total:      p.Total,
 					Report:     *report,
+					Details: map[string]any{
+						"tmdb": copyTMDBBatchResult(p),
+					},
 				})
 			})
 			return map[string]any{
@@ -1731,55 +1736,73 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 }
 
 func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool, progress func(tmdb.BatchResult)) []*tmdb.ScrapeResult {
-	if len(ids) == 0 {
+	items := a.scrapeItemsForIDs(ctx, ids)
+	if len(items) == 0 {
 		return nil
 	}
 	const workers = 8
-	jobs := make(chan int64)
-	results := make(chan tmdb.ScrapeResult)
-	rep := tmdb.BatchResult{Total: len(ids)}
+	jobs := make(chan adminScrapeItem)
+	events := make(chan adminScrapeEvent)
+	rep := tmdb.BatchResult{Total: len(items)}
 	if progress != nil {
 		progress(rep)
 	}
 	var wg sync.WaitGroup
 	workerCount := workers
-	if len(ids) < workerCount {
-		workerCount = len(ids)
+	if len(items) < workerCount {
+		workerCount = len(items)
 	}
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for id := range jobs {
-				res, err := a.scraper.ScrapeVideoList(ctx, id, force)
+			for item := range jobs {
+				started := item
+				events <- adminScrapeEvent{Started: &started}
+				res, err := a.scraper.ScrapeVideoList(ctx, item.id, force)
 				if err != nil {
-					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
-					results <- tmdb.ScrapeResult{VideoListID: id, Failed: true, Reason: err.Error()}
+					a.log.Warn("tmdb scrape failed", "video_list_id", item.id, "err", err)
+					events <- adminScrapeEvent{Result: &tmdb.ScrapeResult{VideoListID: item.id, VideoType: item.videoType, Title: item.title, Failed: true, Reason: err.Error()}}
 					continue
 				}
 				if res == nil {
-					results <- tmdb.ScrapeResult{VideoListID: id, Skipped: true, Reason: "empty result"}
+					events <- adminScrapeEvent{Result: &tmdb.ScrapeResult{VideoListID: item.id, VideoType: item.videoType, Title: item.title, Skipped: true, Reason: "empty result"}}
 					continue
 				}
-				results <- *res
+				events <- adminScrapeEvent{Result: res}
 			}
 		}()
 	}
 	go func() {
 		defer close(jobs)
-		for _, id := range ids {
+		for _, item := range items {
 			if ctx.Err() != nil {
 				return
 			}
-			jobs <- id
+			jobs <- item
 		}
 	}()
 	go func() {
 		wg.Wait()
-		close(results)
+		close(events)
 	}()
-	out := make([]*tmdb.ScrapeResult, 0, len(ids))
-	for res := range results {
+	out := make([]*tmdb.ScrapeResult, 0, len(items))
+	active := map[int64]tmdb.ScrapeResult{}
+	for event := range events {
+		if event.Started != nil {
+			active[event.Started.id] = tmdb.ScrapeResult{VideoListID: event.Started.id, VideoType: event.Started.videoType, Title: event.Started.title}
+			rep.ActiveItems = adminActiveScrapeItems(active)
+			rep.Active = len(rep.ActiveItems)
+			if progress != nil {
+				progress(rep)
+			}
+			continue
+		}
+		if event.Result == nil {
+			continue
+		}
+		res := *event.Result
+		delete(active, res.VideoListID)
 		rep.Processed++
 		if res.Failed {
 			rep.Failed++
@@ -1790,6 +1813,8 @@ func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool, p
 			rep.Matched++
 		}
 		rep.Items = append(rep.Items, res)
+		rep.ActiveItems = adminActiveScrapeItems(active)
+		rep.Active = len(rep.ActiveItems)
 		copyRes := res
 		out = append(out, &copyRes)
 		if progress != nil {
@@ -1797,6 +1822,85 @@ func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool, p
 		}
 	}
 	return out
+}
+
+type adminScrapeItem struct {
+	id        int64
+	videoType string
+	title     string
+}
+
+type adminScrapeEvent struct {
+	Started *adminScrapeItem
+	Result  *tmdb.ScrapeResult
+}
+
+func (a *Admin) scrapeItemsForIDs(ctx context.Context, ids []int64) []adminScrapeItem {
+	ids = uniquePositiveIDs(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT id, video_type, title
+		FROM video_list
+		WHERE deleted_at IS NULL
+		  AND id IN (`+placeholdersForIDs(ids)+`)`,
+		args...,
+	)
+	if err != nil {
+		out := make([]adminScrapeItem, 0, len(ids))
+		for _, id := range ids {
+			out = append(out, adminScrapeItem{id: id})
+		}
+		return out
+	}
+	defer rows.Close()
+	found := map[int64]adminScrapeItem{}
+	for rows.Next() {
+		var item adminScrapeItem
+		if err := rows.Scan(&item.id, &item.videoType, &item.title); err == nil {
+			found[item.id] = item
+		}
+	}
+	out := make([]adminScrapeItem, 0, len(ids))
+	for _, id := range ids {
+		if item, ok := found[id]; ok {
+			out = append(out, item)
+			continue
+		}
+		out = append(out, adminScrapeItem{id: id})
+	}
+	return out
+}
+
+func adminActiveScrapeItems(active map[int64]tmdb.ScrapeResult) []tmdb.ScrapeResult {
+	if len(active) == 0 {
+		return nil
+	}
+	out := make([]tmdb.ScrapeResult, 0, len(active))
+	for _, item := range active {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].VideoListID < out[j].VideoListID })
+	return out
+}
+
+func scrapeResultLabel(item tmdb.ScrapeResult) string {
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		title = fmt.Sprintf("#%d", item.VideoListID)
+	}
+	if item.VideoType == db.VideoTypeTV {
+		return "剧集 " + title
+	}
+	if item.VideoType == db.VideoTypeMovie {
+		return "电影 " + title
+	}
+	return title
 }
 
 func (a *Admin) updateScanJob(id string, fn func(*scanJob)) {
@@ -2722,7 +2826,7 @@ func (a *Admin) TMDBRefreshAllStart(w http.ResponseWriter, r *http.Request) {
 			Progress: func(p tmdb.BatchResult) {
 				p.Duration = time.Since(job.StartedAt).Milliseconds()
 				a.updateTMDBJob(id, func(j *tmdbRefreshJob) {
-					j.Progress = p
+					j.Progress = copyTMDBBatchResult(p)
 				})
 			},
 		})
@@ -2734,9 +2838,10 @@ func (a *Admin) TMDBRefreshAllStart(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			j.Status = "done"
-			j.Result = rep
 			if rep != nil {
-				j.Progress = *rep
+				cp := copyTMDBBatchResult(*rep)
+				j.Progress = cp
+				j.Result = &cp
 			}
 		})
 	}()
@@ -2774,9 +2879,18 @@ func (a *Admin) cloneTMDBJob(job *tmdbRefreshJob) *tmdbRefreshJob {
 		return nil
 	}
 	out := *job
+	out.Progress = copyTMDBBatchResult(job.Progress)
 	if job.Result != nil {
-		cp := *job.Result
+		cp := copyTMDBBatchResult(*job.Result)
 		out.Result = &cp
 	}
 	return &out
+}
+
+func copyTMDBBatchResult(in tmdb.BatchResult) tmdb.BatchResult {
+	out := in
+	out.Errors = append([]string(nil), in.Errors...)
+	out.ActiveItems = append([]tmdb.ScrapeResult(nil), in.ActiveItems...)
+	out.Items = append([]tmdb.ScrapeResult(nil), in.Items...)
+	return out
 }

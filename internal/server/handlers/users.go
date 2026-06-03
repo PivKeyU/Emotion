@@ -417,50 +417,76 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	type resumeRow struct {
+		videoListID    int64
+		videoSeasonID  db.NullInt64
+		videoEpisodeID db.NullInt64
+		playSeconds    db.NullInt64
+		isComplete     db.NullBool
+		videoType      db.NullString
+		videoTitle     db.NullString
+		videoDateAir   sql.NullTime
+		seasonTitle    db.NullString
+		seasonNumber   db.NullInt64
+		episodeTitle   db.NullString
+		episodeNumber  db.NullInt64
+		fileSecond     db.NullInt64
+	}
 	seen := map[int64]struct{}{}
-	out := []any{}
+	resumeRows := []resumeRow{}
+	videoListIDs := []int64{}
+	videoEpisodeIDs := []int64{}
 	for rows.Next() {
-		var (
-			videoListID    int64
-			videoSeasonID  db.NullInt64
-			videoEpisodeID db.NullInt64
-			playSeconds    db.NullInt64
-			isComplete     db.NullBool
-			videoType      db.NullString
-			videoTitle     db.NullString
-			videoDateAir   sql.NullTime
-			seasonTitle    db.NullString
-			seasonNumber   db.NullInt64
-			episodeTitle   db.NullString
-			episodeNumber  db.NullInt64
-			fileSecond     db.NullInt64
-		)
-		if err := rows.Scan(&videoListID, &videoSeasonID, &videoEpisodeID,
-			&playSeconds, &isComplete,
-			&videoType, &videoTitle, &videoDateAir,
-			&seasonTitle, &seasonNumber,
-			&episodeTitle, &episodeNumber, &fileSecond); err != nil {
+		var row resumeRow
+		if err := rows.Scan(&row.videoListID, &row.videoSeasonID, &row.videoEpisodeID,
+			&row.playSeconds, &row.isComplete,
+			&row.videoType, &row.videoTitle, &row.videoDateAir,
+			&row.seasonTitle, &row.seasonNumber,
+			&row.episodeTitle, &row.episodeNumber, &row.fileSecond); err != nil {
 			u.log.Error("resume scan failed", "err", err)
 			continue
 		}
-		if _, dup := seen[videoListID]; dup {
+		if _, dup := seen[row.videoListID]; dup {
 			continue
 		}
-		seen[videoListID] = struct{}{}
+		seen[row.videoListID] = struct{}{}
+		resumeRows = append(resumeRows, row)
+		videoListIDs = append(videoListIDs, row.videoListID)
+		if row.videoType.String == db.VideoTypeTV && row.videoEpisodeID.Valid {
+			videoEpisodeIDs = append(videoEpisodeIDs, row.videoEpisodeID.Int64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		u.log.Error("resume rows failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
 
-		uvr := u.transform.FormatUserVideoRecord(playSeconds.Int64, isComplete.Bool, fileSecond.Int64)
-		videoID := emby.ItemID(emby.ItemIDTypeVideoList, videoListID)
+	images, err := u.transform.loadImagePresence(ctx, map[string][]int64{
+		emby.ItemIDTypeVideoList:    videoListIDs,
+		emby.ItemIDTypeVideoEpisode: videoEpisodeIDs,
+	})
+	if err != nil {
+		u.log.Error("resume image prefetch failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
 
-		if videoType.String == db.VideoTypeTV && videoEpisodeID.Valid {
-			episodeID := emby.ItemID(emby.ItemIDTypeVideoEpisode, videoEpisodeID.Int64)
+	out := make([]any, 0, len(resumeRows))
+	for _, row := range resumeRows {
+		uvr := u.transform.FormatUserVideoRecord(row.playSeconds.Int64, row.isComplete.Bool, row.fileSecond.Int64)
+		videoID := emby.ItemID(emby.ItemIDTypeVideoList, row.videoListID)
+
+		if row.videoType.String == db.VideoTypeTV && row.videoEpisodeID.Valid {
+			episodeID := emby.ItemID(emby.ItemIDTypeVideoEpisode, row.videoEpisodeID.Int64)
 			item := map[string]any{
-				"Name":                    episodeTitle.String,
+				"Name":                    row.episodeTitle.String,
 				"Id":                      episodeID,
 				"CanDelete":               false,
-				"RunTimeTicks":            fileSecond.Int64 * emby.TicksPerSecond,
-				"ProductionYear":          videoDateAir.Time.Year(),
-				"IndexNumber":             episodeNumber.Int64,
-				"ParentIndexNumber":       seasonNumber.Int64,
+				"RunTimeTicks":            row.fileSecond.Int64 * emby.TicksPerSecond,
+				"ProductionYear":          row.videoDateAir.Time.Year(),
+				"IndexNumber":             row.episodeNumber.Int64,
+				"ParentIndexNumber":       row.seasonNumber.Int64,
 				"IsFolder":                false,
 				"Type":                    "Episode",
 				"ParentBackdropItemId":    videoID,
@@ -472,24 +498,24 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 					"IsFavorite":            false,
 					"Played":                uvr.IsComplete,
 				},
-				"SeriesName":              videoTitle.String,
+				"SeriesName":              row.videoTitle.String,
 				"SeriesId":                videoID,
 				"SeriesPrimaryImageTag":   "",
-				"SeasonName":              seasonTitle.String,
-				"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID.Int64),
+				"SeasonName":              row.seasonTitle.String,
+				"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, row.videoSeasonID.Int64),
 				"PrimaryImageAspectRatio": 1.7,
 				"BackdropImageTags":       []any{},
 				"MediaType":               "Video",
 			}
-			u.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoEpisode, videoEpisodeID.Int64, episodeID, videoID, videoListID)
+			u.transform.applyImageFieldsWithPresence(ctx, item, emby.ItemIDTypeVideoEpisode, row.videoEpisodeID.Int64, episodeID, videoID, row.videoListID, images)
 			out = append(out, item)
 		} else {
 			item := map[string]any{
-				"Name":           videoTitle.String,
+				"Name":           row.videoTitle.String,
 				"Id":             videoID,
 				"CanDelete":      false,
-				"RunTimeTicks":   fileSecond.Int64 * emby.TicksPerSecond,
-				"ProductionYear": videoDateAir.Time.Year(),
+				"RunTimeTicks":   row.fileSecond.Int64 * emby.TicksPerSecond,
+				"ProductionYear": row.videoDateAir.Time.Year(),
 				"IsFolder":       false,
 				"Type":           "Movie",
 				"UserData": map[string]any{
@@ -503,7 +529,7 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 				"BackdropImageTags":       []any{},
 				"MediaType":               "Video",
 			}
-			u.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoList, videoListID, videoID, "", 0)
+			u.transform.applyImageFieldsWithPresence(ctx, item, emby.ItemIDTypeVideoList, row.videoListID, videoID, "", 0, images)
 			out = append(out, item)
 		}
 	}

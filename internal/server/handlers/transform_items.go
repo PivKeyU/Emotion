@@ -624,19 +624,119 @@ func anyInt64(v any) int64 {
 	}
 }
 
+type imageKey struct {
+	kind      string
+	id        int64
+	imageType string
+}
+
+type imagePresence map[imageKey]bool
+
+func (p imagePresence) has(kind string, id int64, imageType string) bool {
+	if p == nil {
+		return false
+	}
+	return p[imageKey{kind: kind, id: id, imageType: imageType}]
+}
+
+func (t *Transform) loadImagePresence(ctx context.Context, targets map[string][]int64) (imagePresence, error) {
+	presence := imagePresence{}
+	clauses := []string{}
+	args := []any{db.ImageTypePrimary, db.ImageTypeBackdrop}
+
+	for kind, ids := range targets {
+		ids = uniquePositiveIDs(ids)
+		if len(ids) == 0 {
+			continue
+		}
+		clauses = append(clauses, "relation_type = ? AND relation_id IN ("+placeholdersForIDs(ids)+")")
+		args = append(args, kind)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
+	if len(clauses) == 0 {
+		return presence, nil
+	}
+
+	rows, err := t.db.QueryContext(ctx, `
+		SELECT relation_type, relation_id, type
+		FROM video_image
+		WHERE deleted_at IS NULL
+		  AND type IN (?, ?)
+		  AND (`+strings.Join(clauses, " OR ")+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kind, typ string
+		var id int64
+		if err := rows.Scan(&kind, &id, &typ); err != nil {
+			return nil, err
+		}
+		presence[imageKey{kind: kind, id: id, imageType: typ}] = true
+	}
+	return presence, rows.Err()
+}
+
+func uniquePositiveIDs(ids []int64) []int64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := map[int64]struct{}{}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func placeholdersForIDs(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, len(ids))
+	for i := range ids {
+		parts[i] = "?"
+	}
+	return strings.Join(parts, ",")
+}
+
 func (t *Transform) applyImageFields(ctx context.Context, item map[string]any, kind string, numericID int64, itemID, seriesItemID string, seriesID int64) {
+	t.applyImageFieldsWithPresence(ctx, item, kind, numericID, itemID, seriesItemID, seriesID, nil)
+}
+
+func (t *Transform) applyImageFieldsWithPresence(ctx context.Context, item map[string]any, kind string, numericID int64, itemID, seriesItemID string, seriesID int64, images imagePresence) {
 	item["ImageTags"] = map[string]any{}
 	item["BackdropImageTags"] = []any{}
 
-	hasOwnPrimary := t.hasImage(ctx, kind, numericID, db.ImageTypePrimary)
-	hasSeriesPrimary := seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypePrimary)
+	hasImage := func(kind string, id int64, imageType string) bool {
+		if images != nil {
+			return images.has(kind, id, imageType)
+		}
+		return t.hasImage(ctx, kind, id, imageType)
+	}
+
+	hasOwnPrimary := hasImage(kind, numericID, db.ImageTypePrimary)
+	hasSeriesPrimary := seriesID > 0 && hasImage(emby.ItemIDTypeVideoList, seriesID, db.ImageTypePrimary)
 	if hasSeriesPrimary {
 		item["SeriesPrimaryImageTag"] = seriesItemID
 	}
 
-	if t.hasImage(ctx, kind, numericID, db.ImageTypeBackdrop) {
+	if hasImage(kind, numericID, db.ImageTypeBackdrop) {
 		item["BackdropImageTags"] = []any{itemID}
-	} else if seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypeBackdrop) {
+	} else if seriesID > 0 && hasImage(emby.ItemIDTypeVideoList, seriesID, db.ImageTypeBackdrop) {
 		item["ParentBackdropItemId"] = seriesItemID
 		item["ParentBackdropImageTags"] = []any{seriesItemID}
 	}
