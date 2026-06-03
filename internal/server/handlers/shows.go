@@ -89,12 +89,11 @@ func (s *Shows) Seasons(w http.ResponseWriter, r *http.Request) {
 			"SELECT COUNT(*) FROM video_episode WHERE video_season_id = ? AND deleted_at IS NULL", id,
 		).Scan(&childCount)
 
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"Name":                  displayTitle,
 			"SortName":              displayTitle,
 			"ServerId":              s.cfg.EmbyID,
 			"Id":                    seasonID,
-			"ImageTags":             map[string]any{"Primary": seasonID},
 			"CanDelete":             false,
 			"CanDownload":           false,
 			"SupportsSync":          true,
@@ -105,7 +104,6 @@ func (s *Shows) Seasons(w http.ResponseWriter, r *http.Request) {
 			"Type":                  "Season",
 			"SeriesId":              seriesItemID,
 			"SeriesName":            videoTitle,
-			"SeriesPrimaryImageTag": "image",
 			"Genres":                []any{},
 			"People":                []any{},
 			"GenreItems":            []any{},
@@ -119,7 +117,9 @@ func (s *Shows) Seasons(w http.ResponseWriter, r *http.Request) {
 				"IsFavorite":            false,
 				"Played":                false,
 			},
-		})
+		}
+		s.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoSeason, id, seasonID, seriesItemID, numericID)
+		out = append(out, item)
 	}
 	WriteJSON(w, http.StatusOK, ItemResponse(out, int64(len(out))))
 }
@@ -143,28 +143,33 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 		wheres []string
 		args   []any
 	)
-	wheres = append(wheres, "deleted_at IS NULL")
+	wheres = append(wheres, "ve.deleted_at IS NULL")
 	// yamby sometimes passes the series id here; real season filter goes via seasonid query.
 	if kind == emby.ItemIDTypeVideoList {
-		wheres = append(wheres, "video_list_id = ?")
+		wheres = append(wheres, "ve.video_list_id = ?")
+		args = append(args, numericID)
+	} else if kind == emby.ItemIDTypeVideoSeason {
+		wheres = append(wheres, "ve.video_season_id = ?")
 		args = append(args, numericID)
 	}
 
 	seasonQueryID := q.Get("seasonid")
-	var seasonFilterID int64
 	if seasonQueryID != "" {
-		if _, id, ok := emby.ParseItemID(seasonQueryID); ok {
-			seasonFilterID = id
-			wheres = append(wheres, "video_season_id = ?")
+		if seasonKind, id, ok := emby.ParseItemID(seasonQueryID); ok && seasonKind == emby.ItemIDTypeVideoSeason {
+			wheres = append(wheres, "ve.video_season_id = ?")
 			args = append(args, id)
 		}
 	}
 
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id, video_list_id, video_season_id, episode_number, title, description, date_air
-		FROM video_episode
+		SELECT
+			ve.id, ve.video_list_id, ve.video_season_id, ve.episode_number,
+			ve.title, ve.description, ve.date_air,
+			COALESCE(vs.title, ''), COALESCE(vs.season_number, 0)
+		FROM video_episode ve
+		LEFT JOIN video_season vs ON vs.id = ve.video_season_id AND vs.deleted_at IS NULL
 		WHERE %s
-		ORDER BY episode_number ASC
+		ORDER BY COALESCE(vs.season_number, 0), ve.episode_number ASC
 	`, strings.Join(wheres, " AND ")), args...)
 	if err != nil {
 		s.log.Error("episodes query", "err", err)
@@ -181,28 +186,17 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 		title         string
 		description   db.NullString
 		dateAir       sql.NullTime
+		seasonTitle   string
+		seasonNumber  int64
 	}
 	var episodes []epRow
 	for rows.Next() {
 		var e epRow
 		if err := rows.Scan(&e.id, &e.videoListID, &e.videoSeasonID, &e.episodeNumber,
-			&e.title, &e.description, &e.dateAir); err != nil {
+			&e.title, &e.description, &e.dateAir, &e.seasonTitle, &e.seasonNumber); err != nil {
 			continue
 		}
 		episodes = append(episodes, e)
-	}
-
-	var (
-		seasonTitle  string
-		seasonNumber int64
-	)
-	if seasonFilterID == 0 && len(episodes) > 0 {
-		seasonFilterID = episodes[0].videoSeasonID
-	}
-	if seasonFilterID > 0 {
-		_ = s.db.QueryRowContext(ctx,
-			"SELECT title, season_number FROM video_season WHERE id = ? LIMIT 1", seasonFilterID,
-		).Scan(&seasonTitle, &seasonNumber)
 	}
 
 	seriesTitle := ""
@@ -223,13 +217,17 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 			"SELECT COALESCE(file_second, 0) FROM video_media WHERE video_episode_id = ? AND deleted_at IS NULL LIMIT 1",
 			e.id,
 		).Scan(&firstFileSecond)
+		if firstFileSecond <= 0 {
+			firstFileSecond = s.transform.runtimeSeconds(ctx, e.videoListID, e.id)
+		}
 
 		var mediaSources []any
 		if includeMediaSources {
 			mediaSources, _ = s.transform.VideoMediaSources(ctx, e.videoListID, e.id, false, "", "")
 		}
 
-		out = append(out, map[string]any{
+		seriesItemID := emby.ItemID(emby.ItemIDTypeVideoList, e.videoListID)
+		item := map[string]any{
 			"Name":                    e.title,
 			"SortName":                e.title,
 			"Path":                    "/.strm",
@@ -241,18 +239,17 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 			"RunTimeTicks":            firstFileSecond * emby.TicksPerSecond,
 			"Overview":                nullStr(e.description),
 			"IndexNumber":             e.episodeNumber,
-			"ParentIndexNumber":       seasonNumber,
+			"ParentIndexNumber":       e.seasonNumber,
 			"IsFolder":                false,
 			"Type":                    "Episode",
 			"People":                  []any{},
 			"ParentBackdropImageTags": []any{},
-			"SeriesId":                emby.ItemID(emby.ItemIDTypeVideoList, e.videoListID),
+			"SeriesId":                seriesItemID,
 			"SeriesName":              seriesTitle,
 			"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, e.videoSeasonID),
-			"SeasonName":              seasonTitle,
+			"SeasonName":              e.seasonTitle,
 			"PrimaryImageAspectRatio": 1.7,
 			"SeriesPrimaryImageTag":   "",
-			"ImageTags":               map[string]any{"Primary": episodeItemID},
 			"BackdropImageTags":       []any{},
 			"Chapters":                []any{},
 			"MediaSources":            mediaSources,
@@ -264,7 +261,9 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 				"IsFavorite":            false,
 				"Played":                uvr.IsComplete,
 			},
-		})
+		}
+		s.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoEpisode, e.id, episodeItemID, seriesItemID, e.videoListID)
+		out = append(out, item)
 	}
 
 	WriteJSON(w, http.StatusOK, ItemResponse(out, int64(len(out))))

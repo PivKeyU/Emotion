@@ -628,14 +628,26 @@ func (t *Transform) applyImageFields(ctx context.Context, item map[string]any, k
 	item["ImageTags"] = map[string]any{}
 	item["BackdropImageTags"] = []any{}
 
-	if t.hasImage(ctx, kind, numericID, db.ImageTypePrimary) {
+	hasOwnPrimary := t.hasImage(ctx, kind, numericID, db.ImageTypePrimary)
+	hasSeriesPrimary := seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypePrimary)
+	if hasSeriesPrimary {
+		item["SeriesPrimaryImageTag"] = seriesItemID
+	}
+
+	if t.hasImage(ctx, kind, numericID, db.ImageTypeBackdrop) {
+		item["BackdropImageTags"] = []any{itemID}
+	} else if seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypeBackdrop) {
+		item["ParentBackdropItemId"] = seriesItemID
+		item["ParentBackdropImageTags"] = []any{seriesItemID}
+	}
+
+	if hasOwnPrimary {
 		item["ImageTags"] = map[string]any{"Primary": itemID}
 		item["PrimaryImageTag"] = itemID
 		return
 	}
-	if seriesID > 0 && t.hasImage(ctx, emby.ItemIDTypeVideoList, seriesID, db.ImageTypePrimary) {
+	if hasSeriesPrimary {
 		item["PrimaryImageItemId"] = seriesItemID
-		item["SeriesPrimaryImageTag"] = seriesItemID
 		item["ImageTags"] = map[string]any{"Primary": seriesItemID}
 		return
 	}

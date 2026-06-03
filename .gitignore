@@ -1,14 +1,32 @@
-# binaries
+# binaries / build output
 /bin/
+/build/
+/dist/
 /emotion
 /emotion.exe
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
 
-# local env
+# local env / secrets
 .env
 .env.local
+.env.*
+!.env.example
+!.env.sample
 
-# local media/data
+# local app/runtime data
 /data/
+/cache/
+/metadata/
+/tmp/
+/temp/
+/uploads/
+*.db
+*.sqlite
+*.sqlite3
 
 # logs
 /logs/
@@ -16,6 +34,15 @@
 
 # go
 vendor/
+coverage.out
+.coverprofile
+
+# docker/local overrides
+docker-compose.override.yml
+compose.override.yml
+
+# local agent/editor state
+.claude/settings.local.json
 
 # IDE
 .idea/

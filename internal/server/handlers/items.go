@@ -421,6 +421,8 @@ func hasProgress(ctx context.Context, d *db.DB, userID, videoListID int64, video
 	if videoEpisodeID.Valid {
 		query += " AND video_episode_id = ?"
 		args = append(args, videoEpisodeID.Int64)
+	} else {
+		query += " AND video_episode_id IS NULL"
 	}
 	query += " LIMIT 1"
 	var id int64

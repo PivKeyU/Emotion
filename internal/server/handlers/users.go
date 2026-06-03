@@ -384,7 +384,7 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	q := r.URL.Query()
 
-	where := "uvr.user_id = ? AND uvr.play_seconds IS NOT NULL"
+	where := "uvr.user_id = ? AND uvr.play_seconds IS NOT NULL AND COALESCE(uvr.is_complete, false) = false"
 	args := []any{userID}
 	if parent := q.Get("parentid"); parent != "" {
 		if kind, id, ok := emby.ParseItemID(parent); ok && kind == emby.ItemIDTypeVideoLibrary {
@@ -399,7 +399,7 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 		       vl.video_type, vl.title, vl.date_air,
 		       vs.title, vs.season_number,
 		       ve.title, ve.episode_number,
-		       vm.file_second
+		       COALESCE(NULLIF(vm.file_second, 0), ve.runtime * 60, vl.runtime * 60, 0) AS file_second
 		FROM user_video_record uvr
 		LEFT JOIN video_list    vl ON vl.id = uvr.video_list_id
 		LEFT JOIN video_season  vs ON vs.id = uvr.video_season_id
@@ -457,7 +457,7 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 				"Name":                    episodeTitle.String,
 				"Id":                      episodeID,
 				"CanDelete":               false,
-				"RunTimeTicks":            int64(0),
+				"RunTimeTicks":            fileSecond.Int64 * emby.TicksPerSecond,
 				"ProductionYear":          videoDateAir.Time.Year(),
 				"IndexNumber":             episodeNumber.Int64,
 				"ParentIndexNumber":       seasonNumber.Int64,
@@ -478,17 +478,17 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 				"SeasonName":              seasonTitle.String,
 				"SeasonId":                emby.ItemID(emby.ItemIDTypeVideoSeason, videoSeasonID.Int64),
 				"PrimaryImageAspectRatio": 1.7,
-				"ImageTags":               map[string]any{"Primary": episodeID},
 				"BackdropImageTags":       []any{},
 				"MediaType":               "Video",
 			}
+			u.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoEpisode, videoEpisodeID.Int64, episodeID, videoID, videoListID)
 			out = append(out, item)
 		} else {
-			out = append(out, map[string]any{
+			item := map[string]any{
 				"Name":           videoTitle.String,
 				"Id":             videoID,
 				"CanDelete":      false,
-				"RunTimeTicks":   int64(0),
+				"RunTimeTicks":   fileSecond.Int64 * emby.TicksPerSecond,
 				"ProductionYear": videoDateAir.Time.Year(),
 				"IsFolder":       false,
 				"Type":           "Movie",
@@ -500,10 +500,11 @@ func (u *Users) ItemsResume(w http.ResponseWriter, r *http.Request) {
 					"Played":                uvr.IsComplete,
 				},
 				"PrimaryImageAspectRatio": 0.6,
-				"ImageTags":               map[string]any{"Primary": videoID},
 				"BackdropImageTags":       []any{},
 				"MediaType":               "Video",
-			})
+			}
+			u.transform.applyImageFields(ctx, item, emby.ItemIDTypeVideoList, videoListID, videoID, "", 0)
+			out = append(out, item)
 		}
 	}
 	WriteJSON(w, http.StatusOK, ItemResponse(out, int64(len(out))))

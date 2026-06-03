@@ -265,7 +265,7 @@ func (t *Transform) GetUserVideoRecord(ctx context.Context, userID, videoListID,
 		query += " AND video_episode_id = ?"
 		args = append(args, videoEpisodeID)
 	}
-	query += " LIMIT 1"
+	query += " ORDER BY updated_at DESC LIMIT 1"
 
 	var (
 		playSeconds  db.NullInt64
@@ -288,8 +288,31 @@ func (t *Transform) GetUserVideoRecord(ctx context.Context, userID, videoListID,
 		).Scan(&fs)
 		fileSecond = fs.Int64
 	}
+	if fileSecond <= 0 {
+		fileSecond = t.runtimeSeconds(ctx, videoListID, videoEpisodeID)
+	}
 
 	return t.FormatUserVideoRecord(playSeconds.Int64, isComplete.Bool, fileSecond), nil
+}
+
+func (t *Transform) runtimeSeconds(ctx context.Context, videoListID, videoEpisodeID int64) int64 {
+	var minutes db.NullInt64
+	if videoEpisodeID > 0 {
+		_ = t.db.QueryRowContext(ctx, `
+			SELECT COALESCE(ve.runtime, vl.runtime)
+			FROM video_episode ve
+			JOIN video_list vl ON vl.id = ve.video_list_id
+			WHERE ve.id = ? LIMIT 1
+		`, videoEpisodeID).Scan(&minutes)
+	} else if videoListID > 0 {
+		_ = t.db.QueryRowContext(ctx,
+			"SELECT runtime FROM video_list WHERE id = ? LIMIT 1", videoListID,
+		).Scan(&minutes)
+	}
+	if minutes.Valid && minutes.Int64 > 0 {
+		return minutes.Int64 * 60
+	}
+	return 0
 }
 
 // GetUserLibrary returns the list of libraries (CollectionFolder) the user can see.

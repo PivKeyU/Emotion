@@ -323,7 +323,7 @@ func (s *Scraper) updateSeason(ctx context.Context, seasonID int64, t *Season, f
 	updates := []string{}
 	args := []any{}
 
-	if shouldSet(curTitle != "" && curTitle != "第 "+strconv.Itoa(t.SeasonNumber)+" 季", force) && t.Name != "" {
+	if shouldSet(curTitle != "" && !looksLikeSeasonPlaceholderTitle(curTitle, t.SeasonNumber), force) && t.Name != "" {
 		updates = append(updates, "title = ?")
 		args = append(args, t.Name)
 	}
@@ -373,7 +373,7 @@ func (s *Scraper) updateEpisode(ctx context.Context, seasonID int64, ep Episode,
 
 	updates := []string{}
 	args := []any{}
-	if shouldSet(curTitle != "" && !strings.HasPrefix(curTitle, "E"), force) && ep.Name != "" {
+	if shouldSet(curTitle != "" && !looksLikeEpisodePlaceholderTitle(curTitle, ep.EpisodeNumber), force) && ep.Name != "" {
 		updates = append(updates, "title = ?")
 		args = append(args, ep.Name)
 	}
@@ -506,6 +506,47 @@ func looksLikePlaceholderTitle(s string) bool {
 		}
 	}
 	return true
+}
+
+func looksLikeSeasonPlaceholderTitle(title string, seasonNumber int) bool {
+	s := strings.TrimSpace(title)
+	if s == "" {
+		return true
+	}
+	compact := strings.ToLower(strings.Join(strings.Fields(s), ""))
+	n := strconv.Itoa(seasonNumber)
+	return compact == "第"+n+"季" ||
+		compact == "season"+n ||
+		compact == "s"+n ||
+		(seasonNumber == 0 && (compact == "specials" || compact == "special"))
+}
+
+func looksLikeEpisodePlaceholderTitle(title string, episodeNumber int) bool {
+	s := strings.TrimSpace(title)
+	if s == "" {
+		return true
+	}
+	compact := strings.ToLower(strings.Join(strings.Fields(s), ""))
+	n := strconv.Itoa(episodeNumber)
+	n2 := fmt.Sprintf("%02d", episodeNumber)
+	if compact == "e"+n || compact == "e"+n2 ||
+		compact == "ep"+n || compact == "ep"+n2 ||
+		compact == "episode"+n || compact == "episode"+n2 ||
+		compact == "第"+n+"集" || compact == "第"+n2+"集" {
+		return true
+	}
+	lower := strings.ToLower(s)
+	for _, suffix := range []string{
+		" e" + n, " e" + n2,
+		" ep" + n, " ep" + n2,
+		" episode " + n, " episode " + n2,
+		" 第" + n + "集", " 第" + n2 + "集",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseDateOrZero parses TMDB's YYYY-MM-DD date, returning zero for empty/bad.

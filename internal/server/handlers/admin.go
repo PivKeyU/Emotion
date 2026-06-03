@@ -1695,7 +1695,31 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 		wantScrape := mode == "on" || mode == "force" ||
 			(mode == "" && a.cfg.TMDBAutoScrape)
 		if wantScrape && a.scraper != nil && a.scraper.Enabled() {
-			scrapeResults := a.scrapeVideoLists(ctx, report.TouchedVideoListIDs, mode == "force")
+			scrapeResults := a.scrapeVideoLists(ctx, report.TouchedVideoListIDs, mode == "force", func(p tmdb.BatchResult) {
+				if progress == nil {
+					return
+				}
+				current := ""
+				if len(p.Items) > 0 {
+					last := p.Items[len(p.Items)-1]
+					current = fmt.Sprintf("%s #%d", strings.TrimSpace(last.Title), last.VideoListID)
+					if last.Failed {
+						current += ": " + last.Reason
+					} else if last.Skipped {
+						current += ": " + last.Reason
+					} else if last.MatchedTitle != "" {
+						current += " -> " + last.MatchedTitle
+					}
+				}
+				progress(importer.Progress{
+					Stage:      "scraping",
+					Current:    current,
+					WalkedDirs: report.Scanned,
+					Processed:  p.Processed,
+					Total:      p.Total,
+					Report:     *report,
+				})
+			})
 			return map[string]any{
 				"import": report,
 				"tmdb":   scrapeResults,
@@ -1706,13 +1730,17 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 	return report, nil
 }
 
-func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool) []*tmdb.ScrapeResult {
+func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool, progress func(tmdb.BatchResult)) []*tmdb.ScrapeResult {
 	if len(ids) == 0 {
 		return nil
 	}
 	const workers = 8
 	jobs := make(chan int64)
-	results := make(chan *tmdb.ScrapeResult)
+	results := make(chan tmdb.ScrapeResult)
+	rep := tmdb.BatchResult{Total: len(ids)}
+	if progress != nil {
+		progress(rep)
+	}
 	var wg sync.WaitGroup
 	workerCount := workers
 	if len(ids) < workerCount {
@@ -1726,9 +1754,14 @@ func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool) [
 				res, err := a.scraper.ScrapeVideoList(ctx, id, force)
 				if err != nil {
 					a.log.Warn("tmdb scrape failed", "video_list_id", id, "err", err)
+					results <- tmdb.ScrapeResult{VideoListID: id, Failed: true, Reason: err.Error()}
 					continue
 				}
-				results <- res
+				if res == nil {
+					results <- tmdb.ScrapeResult{VideoListID: id, Skipped: true, Reason: "empty result"}
+					continue
+				}
+				results <- *res
 			}
 		}()
 	}
@@ -1747,8 +1780,20 @@ func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool) [
 	}()
 	out := make([]*tmdb.ScrapeResult, 0, len(ids))
 	for res := range results {
-		if res != nil {
-			out = append(out, res)
+		rep.Processed++
+		if res.Failed {
+			rep.Failed++
+			rep.Errors = append(rep.Errors, fmt.Sprintf("id=%d: %s", res.VideoListID, res.Reason))
+		} else if res.Skipped {
+			rep.Skipped++
+		} else {
+			rep.Matched++
+		}
+		rep.Items = append(rep.Items, res)
+		copyRes := res
+		out = append(out, &copyRes)
+		if progress != nil {
+			progress(rep)
 		}
 	}
 	return out
