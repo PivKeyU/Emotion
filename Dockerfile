@@ -1,6 +1,12 @@
-FROM golang:1.24-alpine AS builder
+ARG GOLANG_IMAGE=golang:1.24-alpine
+ARG ALPINE_IMAGE=alpine:3.20
+
+FROM ${GOLANG_IMAGE} AS builder
 
 WORKDIR /src
+
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
 
 # Pre-cache the module manifest. go.sum is optional — the repo may not ship one
 # yet, and `COPY go.mod go.sum ./` would hard-fail in that case ("go.sum: not
@@ -14,9 +20,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/emotion ./cmd/emotion
 
-FROM alpine:3.20
+FROM ${ALPINE_IMAGE}
 
-RUN apk add --no-cache ca-certificates tzdata ffmpeg && \
+ARG ALPINE_REPOSITORY=
+RUN if [ -n "$ALPINE_REPOSITORY" ]; then \
+        printf '%s/v3.20/main\n%s/v3.20/community\n' "$ALPINE_REPOSITORY" "$ALPINE_REPOSITORY" > /etc/apk/repositories; \
+    fi && \
+    apk add --no-cache ca-certificates tzdata ffmpeg && \
     adduser -D -u 1000 app
 
 WORKDIR /app

@@ -440,6 +440,34 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := a.db.QueryContext(r.Context(), `
+		WITH active_lists AS (
+			SELECT id, video_library_id, video_type
+			FROM video_list
+			WHERE deleted_at IS NULL
+		),
+		list_counts AS (
+			SELECT
+				video_library_id,
+				COUNT(*) AS item_count,
+				COUNT(*) FILTER (WHERE video_type = 'movie') AS movie_count,
+				COUNT(*) FILTER (WHERE video_type = 'tv') AS series_count
+			FROM active_lists
+			GROUP BY video_library_id
+		),
+		episode_counts AS (
+			SELECT vl.video_library_id, COUNT(ve.id) AS episode_count
+			FROM active_lists vl
+			JOIN video_episode ve
+				ON ve.video_list_id = vl.id AND ve.deleted_at IS NULL
+			GROUP BY vl.video_library_id
+		),
+		media_counts AS (
+			SELECT vl.video_library_id, COUNT(vm.id) AS media_count
+			FROM active_lists vl
+			JOIN video_media vm
+				ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
+			GROUP BY vl.video_library_id
+		)
 		SELECT
 			l.id,
 			l.name,
@@ -448,20 +476,19 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			l.watch_enabled,
 			l.watch_interval_seconds,
 			l.created_at,
-			COUNT(DISTINCT vl.id) AS item_count,
-			COUNT(DISTINCT CASE WHEN vl.video_type = 'movie' THEN vl.id END) AS movie_count,
-			COUNT(DISTINCT CASE WHEN vl.video_type = 'tv' THEN vl.id END) AS series_count,
-			COUNT(DISTINCT ve.id) AS episode_count,
-			COUNT(DISTINCT vm.id) AS media_count
+			COALESCE(lc.item_count, 0) AS item_count,
+			COALESCE(lc.movie_count, 0) AS movie_count,
+			COALESCE(lc.series_count, 0) AS series_count,
+			COALESCE(ec.episode_count, 0) AS episode_count,
+			COALESCE(mc.media_count, 0) AS media_count
 		FROM library l
-		LEFT JOIN video_list vl
-			ON vl.video_library_id = l.id AND vl.deleted_at IS NULL
-		LEFT JOIN video_episode ve
-			ON ve.video_list_id = vl.id AND ve.deleted_at IS NULL
-		LEFT JOIN video_media vm
-			ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
+		LEFT JOIN list_counts lc
+			ON lc.video_library_id = l.id
+		LEFT JOIN episode_counts ec
+			ON ec.video_library_id = l.id
+		LEFT JOIN media_counts mc
+			ON mc.video_library_id = l.id
 		WHERE l.deleted_at IS NULL
-		GROUP BY l.id, l.name, l.role, l.root_path, l.watch_enabled, l.watch_interval_seconds, l.created_at
 		ORDER BY l.id ASC`)
 	if err != nil {
 		a.log.Error("library list failed", "category", "admin", "err", err)
