@@ -1426,9 +1426,9 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 	case "info":
 		where = append(where, missingInfoSQL())
 	case "unscraped":
-		where = append(where, missingProviderIDSQL())
+		where = append(where, missingMetadataSQL())
 	default:
-		where = append(where, "("+missingInfoSQL()+" OR "+missingPosterSQL()+")")
+		where = append(where, "("+missingInfoSQL()+" OR "+missingPosterSQL()+" OR "+missingMetadataSQL()+")")
 	}
 	limitSQL := ""
 	if opts.MaxItems > 0 {
@@ -1460,7 +1460,11 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 }
 
 func missingInfoSQL() string {
-	return "(" + missingProviderIDSQL() + " OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+	return "(vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+}
+
+func missingMetadataSQL() string {
+	return "(" + missingProviderIDSQL() + " AND COALESCE(vl.description, '') = '' AND vl.date_air IS NULL)"
 }
 
 func missingProviderIDSQL() string {

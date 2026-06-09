@@ -239,7 +239,7 @@ func (i *Importer) Run(ctx context.Context, opts Options) (*Report, error) {
 			case itemKindEpisode:
 				if activeSeries == nil {
 					// Promote: create a minimal series from parsed folder/filename.
-					series, err := i.upsertSeriesFromGuess(ctx, opts, bucket, classified)
+					series, err := i.upsertSeriesFromGuess(ctx, opts, bucket, mediaPath, classified)
 					if err != nil {
 						rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", mediaPath, err))
 						log.Warn("synth series failed", "category", "scan", "path", mediaPath, "err", err)
@@ -453,7 +453,7 @@ func (i *Importer) upsertSeries(ctx context.Context, opts Options, bucket *DirFi
 	return &upsertResult{id: id, title: title}, nil
 }
 
-func (i *Importer) upsertSeriesFromGuess(ctx context.Context, opts Options, bucket *DirFiles, c *classifiedMedia) (*upsertResult, error) {
+func (i *Importer) upsertSeriesFromGuess(ctx context.Context, opts Options, bucket *DirFiles, mediaPath string, c *classifiedMedia) (*upsertResult, error) {
 	// Try to find the series title from: season folder's parent > bucket.Dir > parsed.Title
 	seasonFolderName := filepath.Base(bucket.Path)
 	title := ""
@@ -474,6 +474,19 @@ func (i *Importer) upsertSeriesFromGuess(ctx context.Context, opts Options, buck
 	if y := extractYear(title); y > 0 {
 		parsed.Year = y
 		air = sql.NullTime{Valid: true, Time: time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)}
+	}
+	if existing, err := i.findExistingListByMediaPath(ctx, opts, db.VideoTypeTV, mediaPath); err != nil {
+		return nil, err
+	} else if existing != nil {
+		if err := i.updateVideoList(ctx, existing.id,
+			nullableProviderID(parsed.TMDBID), nullableProviderID(parsed.IMDBID), nullableProviderID(parsed.TVDBID),
+			parsed.Title, "", sql.NullString{}, air, 0); err != nil {
+			return nil, err
+		}
+		if existing.title == "" {
+			existing.title = parsed.Title
+		}
+		return existing, nil
 	}
 	id, err := i.upsertVideoList(ctx, opts, db.VideoTypeTV,
 		nullableProviderID(parsed.TMDBID), nullableProviderID(parsed.IMDBID), nullableProviderID(parsed.TVDBID),
@@ -526,9 +539,20 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 		title = strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
 	}
 
-	listID, err := i.upsertVideoList(ctx, opts, db.VideoTypeMovie, tmdbID, imdbID, tvdbID, title, origin, desc, air, runtime)
-	if err != nil {
-		return nil, err
+	var listID int64
+	if existing, findErr := i.findExistingListByMediaPath(ctx, opts, db.VideoTypeMovie, mediaPath); findErr != nil {
+		return nil, findErr
+	} else if existing != nil {
+		listID = existing.id
+		if err := i.updateVideoList(ctx, listID, tmdbID, imdbID, tvdbID, title, origin, desc, air, runtime); err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		listID, err = i.upsertVideoList(ctx, opts, db.VideoTypeMovie, tmdbID, imdbID, tvdbID, title, origin, desc, air, runtime)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if c.nfo != nil {
 		i.attachImagesForList(ctx, opts, listID, bucket, c.nfo)
@@ -695,15 +719,69 @@ func (i *Importer) upsertVideoList(
 		return 0, err
 	}
 
-	_, err = i.db.ExecContext(ctx, `
+	if err := i.updateVideoList(ctx, existingID, tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime); err != nil {
+		return 0, err
+	}
+	return existingID, nil
+}
+
+func (i *Importer) updateVideoList(
+	ctx context.Context, id int64,
+	tmdbID, imdbID, tvdbID sql.NullString, title, originTitle string,
+	description sql.NullString, dateAir sql.NullTime, runtime int,
+) error {
+	origin := sql.NullString{Valid: originTitle != "", String: originTitle}
+	runtimeVal := nullableInt(runtime)
+
+	_, err := i.db.ExecContext(ctx, `
 		UPDATE video_list
 		SET tmdb_id = COALESCE(?, tmdb_id),
 			imdb_id = COALESCE(?, imdb_id),
 			tvdb_id = COALESCE(?, tvdb_id),
-			title = ?, origin_title = ?, description = ?, date_air = ?, runtime = ?, deleted_at = NULL
+			title = CASE WHEN ? <> '' THEN ? ELSE title END,
+			origin_title = COALESCE(?, origin_title),
+			description = COALESCE(?, description),
+			date_air = COALESCE(?, date_air),
+			runtime = COALESCE(?, runtime),
+			deleted_at = NULL
 		WHERE id = ?
-	`, tmdbID, imdbID, tvdbID, title, origin, description, dateAir, runtimeVal, existingID)
-	return existingID, err
+	`, tmdbID, imdbID, tvdbID, title, title, origin, description, dateAir, runtimeVal, id)
+	return err
+}
+
+func (i *Importer) findExistingListByMediaPath(ctx context.Context, opts Options, videoType, mediaPath string) (*upsertResult, error) {
+	if opts.DryRun {
+		return nil, nil
+	}
+	_, pathURL, err := resolveMediaPath(mediaPath)
+	if err != nil {
+		return nil, err
+	}
+	pathURL = strings.TrimSpace(pathURL)
+	if pathURL == "" {
+		return nil, nil
+	}
+
+	out := &upsertResult{}
+	err = i.db.QueryRowContext(ctx, `
+		SELECT vl.id, vl.title
+		FROM video_media vm
+		JOIN video_list vl ON vl.id = vm.video_list_id
+		WHERE vl.video_library_id = ?
+		  AND vl.video_type = ?
+		  AND vl.deleted_at IS NULL
+		  AND vm.deleted_at IS NULL
+		  AND vm.path_url = ?
+		ORDER BY vm.updated_at DESC, vm.id DESC
+		LIMIT 1
+	`, opts.LibraryID, videoType, pathURL).Scan(&out.id, &out.title)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // upsertMedia inserts (or refreshes) a video_media row.

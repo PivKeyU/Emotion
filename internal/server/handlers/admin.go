@@ -886,26 +886,22 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 		like := "%" + search + "%"
 		args = append(args, like, like)
 	}
-	providerMissing := "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '')"
+	missingPoster := `NOT EXISTS (
+		SELECT 1 FROM video_image vi
+		WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
+		  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
+	)`
+	missingInfo := "(vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+	metadataMissing := "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '' AND COALESCE(vl.description, '') = '' AND vl.date_air IS NULL)"
 	switch strings.ToLower(strings.TrimSpace(q.Get("missing"))) {
 	case "poster":
-		where = append(where, `NOT EXISTS (
-			SELECT 1 FROM video_image vi
-			WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
-			  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
-		)`)
+		where = append(where, missingPoster)
 	case "info":
-		where = append(where, "("+providerMissing+" OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)")
+		where = append(where, missingInfo)
+	case "unscraped":
+		where = append(where, metadataMissing)
 	case "any":
-		where = append(where, `(`+providerMissing+`
-			OR vl.description IS NULL OR vl.description = ''
-			OR vl.date_air IS NULL
-			OR NOT EXISTS (
-				SELECT 1 FROM video_image vi
-				WHERE vi.relation_type = 'vl' AND vi.relation_id = vl.id
-				  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
-			)
-		)`)
+		where = append(where, "("+missingInfo+" OR "+missingPoster+" OR "+metadataMissing+")")
 	}
 	whereSQL := strings.Join(where, " AND ")
 
@@ -1039,6 +1035,9 @@ func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
 	whereSQL := strings.Join(where, " AND ")
 	providerMissing := "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '')"
 	providerPresent := "(COALESCE(vl.tmdb_id, '') <> '' OR COALESCE(vl.imdb_id, '') <> '' OR COALESCE(vl.tvdb_id, '') <> '')"
+	metadataPresent := "(" + providerPresent + " OR COALESCE(vl.description, '') <> '' OR vl.date_air IS NOT NULL)"
+	metadataMissing := "(" + providerMissing + " AND COALESCE(vl.description, '') = '' AND vl.date_air IS NULL)"
+	missingInfo := "(vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
 	row := a.db.QueryRowContext(r.Context(), `
 		WITH primary_images AS (
 			SELECT vi.relation_id
@@ -1050,11 +1049,11 @@ func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT
 			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE `+providerPresent+`) AS scraped,
-			COUNT(*) FILTER (WHERE `+providerMissing+`) AS unscraped,
+			COUNT(*) FILTER (WHERE `+metadataPresent+`) AS scraped,
+			COUNT(*) FILTER (WHERE `+metadataMissing+`) AS unscraped,
 			COUNT(*) FILTER (WHERE pi.relation_id IS NULL) AS missing_poster,
-			COUNT(*) FILTER (WHERE `+providerMissing+` OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL) AS missing_info,
-			COUNT(*) FILTER (WHERE `+providerPresent+`
+			COUNT(*) FILTER (WHERE `+missingInfo+`) AS missing_info,
+			COUNT(*) FILTER (WHERE `+metadataPresent+`
 				AND COALESCE(vl.description, '') <> ''
 				AND vl.date_air IS NOT NULL
 				AND pi.relation_id IS NOT NULL
@@ -1551,7 +1550,7 @@ func scanAdminMediaItem(rows interface {
 	item.PosterURL = adminImageURL(posterType, posterPath, item.ItemID, db.ImageTypePrimary)
 	item.BackdropURL = adminImageURL(backdropType, backdropPath, item.ItemID, db.ImageTypeBackdrop)
 	item.MissingPoster = item.PosterURL == ""
-	item.MissingInfo = (item.TMDBID == "" && item.IMDBID == "" && item.TVDBID == "") || item.Overview == "" || item.DateAir == ""
+	item.MissingInfo = item.Overview == "" || item.DateAir == ""
 	return item, nil
 }
 
