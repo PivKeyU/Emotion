@@ -116,6 +116,16 @@ func extractToken(r *http.Request) string {
 	return ""
 }
 
+func isCompatAnonymousRead(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	path := r.URL.Path
+	return strings.HasSuffix(path, "/Sessions") ||
+		strings.HasSuffix(path, "/Items/Counts") ||
+		strings.HasSuffix(path, "/System/Info")
+}
+
 // authGuardBuilder returns a middleware that authenticates using either:
 //   - the configured admin API key (grants admin context), or
 //   - a user token from the token table (looked up and refreshed).
@@ -126,6 +136,10 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := extractToken(r)
 			if token == "" {
+				if isCompatAnonymousRead(r) {
+					next.ServeHTTP(w, r)
+					return
+				}
 				writeText(w, http.StatusUnauthorized, "登录失效 请重新登录")
 				return
 			}
@@ -181,11 +195,11 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 
 			// Look up user token.
 			var (
-				tokenID    int64
-				userID     int64
-				devClient  sql.NullString
-				devName    sql.NullString
-				devID      sql.NullString
+				tokenID   int64
+				userID    int64
+				devClient sql.NullString
+				devName   sql.NullString
+				devID     sql.NullString
 			)
 			err = deps.DB.QueryRowContext(r.Context(),
 				"SELECT id, user_id, device_client, device_name, device_id FROM token WHERE token = ? LIMIT 1", token,
@@ -193,6 +207,10 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					deps.Logger.Error("auth token lookup failed", "err", err)
+				}
+				if isCompatAnonymousRead(r) {
+					next.ServeHTTP(w, r)
+					return
 				}
 				writeText(w, http.StatusUnauthorized, "登录失效 请重新登录")
 				return
