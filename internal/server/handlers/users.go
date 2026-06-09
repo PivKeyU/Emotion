@@ -697,6 +697,9 @@ func (u *Users) Played(w http.ResponseWriter, r *http.Request) {
 }
 
 func routeUserID(r *http.Request) int64 {
+	if ctxpkg.IsAPIKey(r.Context()) {
+		return 0
+	}
 	if !ctxpkg.IsAdmin(r.Context()) {
 		return 0
 	}
