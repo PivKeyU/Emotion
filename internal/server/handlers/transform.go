@@ -33,7 +33,7 @@ func (t *Transform) UserFolders(ctx context.Context, userID int64) ([]int64, err
 	}
 	var folders db.NullString
 	err := t.db.QueryRowContext(ctx,
-		"SELECT folders FROM app_user WHERE id = ? LIMIT 1", userID,
+		"SELECT folders FROM app_user WHERE id = ? AND deleted_at IS NULL LIMIT 1", userID,
 	).Scan(&folders)
 	if err != nil {
 		return nil, err
@@ -76,11 +76,12 @@ func (t *Transform) User(ctx context.Context, userID int64) (map[string]any, err
 		username  db.NullString
 		isCanDown db.NullBool
 		isAdmin   db.NullBool
+		isDisable db.NullBool
 		folders   db.NullString
 	)
 	err := t.db.QueryRowContext(ctx,
-		"SELECT username, is_can_down, is_admin, folders FROM app_user WHERE id = ? LIMIT 1", userID,
-	).Scan(&username, &isCanDown, &isAdmin, &folders)
+		"SELECT username, is_can_down, is_admin, is_disable, folders FROM app_user WHERE id = ? AND deleted_at IS NULL LIMIT 1", userID,
+	).Scan(&username, &isCanDown, &isAdmin, &isDisable, &folders)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +136,7 @@ func (t *Transform) User(ctx context.Context, userID int64) (map[string]any, err
 			"IsHidden":                         true,
 			"IsHiddenRemotely":                 true,
 			"IsHiddenFromUnusedDevices":        true,
-			"IsDisabled":                       false,
+			"IsDisabled":                       isDisable.Bool,
 			"LockedOutDate":                    0,
 			"AllowTagOrRating":                 false,
 			"BlockedTags":                      []any{},
@@ -175,9 +176,39 @@ func (t *Transform) User(ctx context.Context, userID int64) (map[string]any, err
 			"EnableAllDevices":                 true,
 			"AllowCameraUpload":                false,
 			"AllowSharingPersonalItems":        false,
+			"BlockedMediaFolders":              t.blockedLibraryNames(ctx, enableAllFolders, ids),
 		},
 		"HasConfiguredEasyPassword": false,
 	}, nil
+}
+
+func (t *Transform) blockedLibraryNames(ctx context.Context, enableAllFolders bool, enabledIDs []int64) []any {
+	if enableAllFolders {
+		return []any{}
+	}
+	enabled := make(map[int64]struct{}, len(enabledIDs))
+	for _, id := range enabledIDs {
+		enabled[id] = struct{}{}
+	}
+	rows, err := t.db.QueryContext(ctx, "SELECT id, name FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
+	if err != nil {
+		return []any{}
+	}
+	defer rows.Close()
+	out := []any{}
+	for rows.Next() {
+		var (
+			id   int64
+			name string
+		)
+		if err := rows.Scan(&id, &name); err != nil {
+			continue
+		}
+		if _, ok := enabled[id]; !ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (t *Transform) pseudoAdminUser(ctx context.Context) (map[string]any, error) {

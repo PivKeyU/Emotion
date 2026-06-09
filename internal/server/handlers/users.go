@@ -697,16 +697,13 @@ func (u *Users) Played(w http.ResponseWriter, r *http.Request) {
 }
 
 func routeUserID(r *http.Request) int64 {
-	if ctxpkg.IsAPIKey(r.Context()) {
-		return 0
+	if ctxpkg.IsAPIKey(r.Context()) || ctxpkg.IsAdmin(r.Context()) {
+		if id, err := strconv.ParseInt(chi.URLParam(r, "userId"), 10, 64); err == nil && id >= 0 {
+			return id
+		}
+		return queryUserID(r)
 	}
-	if !ctxpkg.IsAdmin(r.Context()) {
-		return 0
-	}
-	if id, err := strconv.ParseInt(chi.URLParam(r, "userId"), 10, 64); err == nil && id >= 0 {
-		return id
-	}
-	return queryUserID(r)
+	return 0
 }
 
 func queryUserID(r *http.Request) int64 {

@@ -69,6 +69,8 @@ var migrations = []string{
 		remark VARCHAR(255) NULL,
 		CONSTRAINT unx_user UNIQUE (username)
 	)`,
+	`ALTER TABLE app_user DROP CONSTRAINT IF EXISTS unx_user`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS unx_user_active_username ON app_user (username) WHERE deleted_at IS NULL`,
 
 	`CREATE TABLE IF NOT EXISTS token (
 		id BIGSERIAL PRIMARY KEY,

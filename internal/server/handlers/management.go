@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -197,7 +198,11 @@ func (m *Management) UserNew(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		m.log.Error("user create failed", "err", err)
-		WriteText(w, http.StatusConflict, "用户名已存在")
+		if m.activeUsernameExists(r, name, 0) {
+			WriteText(w, http.StatusConflict, "用户名已存在")
+			return
+		}
+		WriteText(w, http.StatusInternalServerError, "创建用户失败")
 		return
 	}
 	id, _ := res.LastInsertId()
@@ -214,7 +219,8 @@ func (m *Management) UserDelete(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusNotFound)
 		return
 	}
-	_, err := m.db.ExecContext(r.Context(),
+	ctx := context.WithoutCancel(r.Context())
+	_, err := m.db.ExecContext(ctx,
 		"UPDATE app_user SET deleted_at = NOW() WHERE id = ?", userID)
 	if err != nil {
 		m.log.Error("user delete failed", "err", err)
@@ -222,7 +228,7 @@ func (m *Management) UserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Drop the user's outstanding tokens so the client is kicked out.
-	_, _ = m.db.ExecContext(r.Context(), "DELETE FROM token WHERE user_id = ?", userID)
+	_, _ = m.db.ExecContext(ctx, "DELETE FROM token WHERE user_id = ?", userID)
 	WriteStatus(w, http.StatusNoContent)
 }
 
@@ -285,10 +291,10 @@ func (m *Management) UserPassword(w http.ResponseWriter, r *http.Request) {
 // userPolicyBody only captures the fields Sakura_embyboss actually changes.
 // We store the full payload as JSON on the user row so future reads round-trip cleanly.
 type userPolicyBody struct {
-	IsAdministrator          bool     `json:"IsAdministrator"`
-	IsDisabled               bool     `json:"IsDisabled"`
-	EnableContentDownloading bool     `json:"EnableContentDownloading"`
-	EnableAllFolders         bool     `json:"EnableAllFolders"`
+	IsAdministrator          *bool    `json:"IsAdministrator"`
+	IsDisabled               *bool    `json:"IsDisabled"`
+	EnableContentDownloading *bool    `json:"EnableContentDownloading"`
+	EnableAllFolders         *bool    `json:"EnableAllFolders"`
 	EnabledFolders           []string `json:"EnabledFolders"`
 	BlockedMediaFolders      []any    `json:"BlockedMediaFolders"`
 }
@@ -313,73 +319,51 @@ func (m *Management) UserPolicy(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var body userPolicyBody
-	_ = json.Unmarshal(raw, &body)
-
-	// Resolve visible library IDs.
-	// Sakura sends library names in BlockedMediaFolders and library GUIDs in EnabledFolders.
-	// Our library table is keyed by numeric id, which we also use as GUID; so parse "vb-<id>"
-	// or bare numerics.
-	var visibleIDs []int64
-	if body.EnableAllFolders {
-		rows, err := m.db.QueryContext(r.Context(),
-			"SELECT id FROM library WHERE deleted_at IS NULL")
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err == nil {
-					visibleIDs = append(visibleIDs, id)
-				}
-			}
-		}
-	} else {
-		for _, g := range body.EnabledFolders {
-			if id, ok := parseGUIDOrID(g); ok {
-				visibleIDs = append(visibleIDs, id)
-			}
-		}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
 	}
 
-	// Also handle blocked names - if any library name is in BlockedMediaFolders, remove from visibles.
+	var (
+		currentAdmin   db.NullBool
+		currentDisable db.NullBool
+		currentCanDown db.NullBool
+		currentFolders db.NullString
+	)
+	err = m.db.QueryRowContext(r.Context(), `
+		SELECT is_admin, is_disable, is_can_down, folders
+		FROM app_user
+		WHERE id = ? AND deleted_at IS NULL
+		LIMIT 1
+	`, userID).Scan(&currentAdmin, &currentDisable, &currentCanDown, &currentFolders)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			WriteStatus(w, http.StatusNotFound)
+			return
+		}
+		m.log.Error("policy load failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+
 	blockedNames := stringifyAny(body.BlockedMediaFolders)
-	if len(blockedNames) > 0 && len(visibleIDs) > 0 {
-		// Convert names to IDs then subtract.
-		blockedIDs := map[int64]struct{}{}
-		ph := make([]string, 0, len(blockedNames))
-		args := make([]any, 0, len(blockedNames))
-		for _, n := range blockedNames {
-			ph = append(ph, "?")
-			args = append(args, n)
-		}
-		rows, err := m.db.QueryContext(r.Context(),
-			"SELECT id FROM library WHERE name IN ("+strings.Join(ph, ",")+") AND deleted_at IS NULL",
-			args...,
-		)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err == nil {
-					blockedIDs[id] = struct{}{}
-				}
-			}
-		}
-		filtered := visibleIDs[:0]
-		for _, id := range visibleIDs {
-			if _, blocked := blockedIDs[id]; !blocked {
-				filtered = append(filtered, id)
-			}
-		}
-		visibleIDs = filtered
-	}
+	allIDs := m.allLibraryIDs(r)
+	blockedIDs := m.blockedLibraryIDsByName(r, blockedNames)
+	visibleIDs, storeAllFolders := resolvePolicyFolderIDs(allIDs, currentFolders, body.EnableAllFolders, body.EnabledFolders, blockedIDs)
 
-	foldersJSON, _ := json.Marshal(visibleIDs)
+	var foldersValue any
+	if storeAllFolders {
+		foldersValue = nil
+	} else {
+		foldersJSON, _ := json.Marshal(visibleIDs)
+		foldersValue = string(foldersJSON)
+	}
 
 	_, err = m.db.ExecContext(r.Context(), `
 		UPDATE app_user
 		SET is_admin = ?, is_disable = ?, is_can_down = ?, folders = ?
 		WHERE id = ?
-	`, body.IsAdministrator, body.IsDisabled, body.EnableContentDownloading, foldersJSON, userID)
+	`, boolValue(body.IsAdministrator, currentAdmin.Bool), boolValue(body.IsDisabled, currentDisable.Bool), boolValue(body.EnableContentDownloading, currentCanDown.Bool), foldersValue, userID)
 	if err != nil {
 		m.log.Error("policy update failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -448,7 +432,11 @@ func (m *Management) AdminUserUpdate(w http.ResponseWriter, r *http.Request) {
 		"UPDATE app_user SET "+strings.Join(sets, ", ")+" WHERE id = ? AND deleted_at IS NULL", args...)
 	if err != nil {
 		m.log.Error("admin user update failed", "err", err)
-		WriteText(w, http.StatusInternalServerError, err.Error())
+		if m.activeUsernameExists(r, name, userID) {
+			WriteText(w, http.StatusConflict, "用户名已存在")
+			return
+		}
+		WriteText(w, http.StatusInternalServerError, "更新用户失败")
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -830,6 +818,18 @@ func (m *Management) activeUserCount(r *http.Request) int64 {
 	return count
 }
 
+func (m *Management) activeUsernameExists(r *http.Request, username string, exceptUserID int64) bool {
+	var count int64
+	query := "SELECT COUNT(*) FROM app_user WHERE deleted_at IS NULL AND username = ?"
+	args := []any{username}
+	if exceptUserID > 0 {
+		query += " AND id <> ?"
+		args = append(args, exceptUserID)
+	}
+	_ = m.db.QueryRowContext(r.Context(), query, args...).Scan(&count)
+	return count > 0
+}
+
 func (m *Management) countUsers(r *http.Request, where string, args ...any) int64 {
 	var count int64
 	_ = m.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM app_user WHERE "+where, args...).Scan(&count)
@@ -879,6 +879,13 @@ func idsToFolderStrings(ids []int64) []string {
 	return out
 }
 
+func boolValue(next *bool, fallback bool) bool {
+	if next == nil {
+		return fallback
+	}
+	return *next
+}
+
 func userFolderPolicy(folders db.NullString) (bool, []string) {
 	if !folders.Valid || strings.TrimSpace(folders.String) == "" {
 		return true, []string{}
@@ -888,6 +895,102 @@ func userFolderPolicy(folders db.NullString) (bool, []string) {
 		return true, []string{}
 	}
 	return false, idsToFolderStrings(ids)
+}
+
+func resolvePolicyFolderIDs(allIDs []int64, currentFolders db.NullString, enableAllFolders *bool, enabledFolders []string, blockedIDs map[int64]struct{}) ([]int64, bool) {
+	hasBlocked := len(blockedIDs) > 0
+	hasEnabledFolders := enabledFolders != nil
+
+	if enableAllFolders != nil && *enableAllFolders {
+		if hasBlocked {
+			return removeBlockedIDs(allIDs, blockedIDs), false
+		}
+		return append([]int64{}, allIDs...), true
+	}
+
+	if hasEnabledFolders {
+		ids := folderIDsFromStrings(enabledFolders)
+		if hasBlocked {
+			ids = removeBlockedIDs(ids, blockedIDs)
+		}
+		return ids, false
+	}
+
+	if hasBlocked {
+		return removeBlockedIDs(allIDs, blockedIDs), false
+	}
+
+	if enableAllFolders != nil && !*enableAllFolders {
+		return []int64{}, false
+	}
+
+	if !currentFolders.Valid || strings.TrimSpace(currentFolders.String) == "" {
+		return append([]int64{}, allIDs...), true
+	}
+	return folderIDsFromJSON(currentFolders), false
+}
+
+func folderIDsFromJSON(folders db.NullString) []int64 {
+	if !folders.Valid || strings.TrimSpace(folders.String) == "" {
+		return []int64{}
+	}
+	var ids []int64
+	if err := json.Unmarshal([]byte(folders.String), &ids); err != nil {
+		return []int64{}
+	}
+	return ids
+}
+
+func folderIDsFromStrings(folders []string) []int64 {
+	ids := make([]int64, 0, len(folders))
+	for _, raw := range folders {
+		if id, ok := parseGUIDOrID(raw); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func removeBlockedIDs(ids []int64, blocked map[int64]struct{}) []int64 {
+	if len(blocked) == 0 {
+		return append([]int64{}, ids...)
+	}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := blocked[id]; ok {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+func (m *Management) blockedLibraryIDsByName(r *http.Request, names []string) map[int64]struct{} {
+	out := map[int64]struct{}{}
+	if len(names) == 0 {
+		return out
+	}
+	ph := make([]string, 0, len(names))
+	args := make([]any, 0, len(names))
+	for _, n := range names {
+		ph = append(ph, "?")
+		args = append(args, n)
+	}
+	rows, err := m.db.QueryContext(r.Context(),
+		"SELECT id FROM library WHERE name IN ("+strings.Join(ph, ",")+") AND deleted_at IS NULL",
+		args...,
+	)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err == nil {
+			out[id] = struct{}{}
+		}
+	}
+	return out
 }
 
 // resolveUserID accepts either a numeric id or a hex id string.
