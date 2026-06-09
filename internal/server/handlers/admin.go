@@ -27,6 +27,7 @@ import (
 	"github.com/PivKeyU/Emotion/internal/emby"
 	"github.com/PivKeyU/Emotion/internal/importer"
 	"github.com/PivKeyU/Emotion/internal/logger"
+	"github.com/PivKeyU/Emotion/internal/metadata"
 	"github.com/PivKeyU/Emotion/internal/server/ctxpkg"
 	"github.com/PivKeyU/Emotion/internal/tmdb"
 )
@@ -59,10 +60,19 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 	var (
 		client  *tmdb.Client
 		scraper *tmdb.Scraper
+		opts    []tmdb.ScraperOption
 	)
 	if cfg.TMDBAPIKey != "" {
 		client = tmdb.NewClient(cfg.TMDBAPIKey, tmdb.WithLanguage(cfg.TMDBLanguage))
-		scraper = tmdb.NewScraper(client, database, log)
+	}
+	if strings.TrimSpace(cfg.TVDBAPIKey) != "" {
+		opts = append(opts, tmdb.WithTVDBClient(metadata.NewTVDBClient(cfg.TVDBAPIKey, cfg.TVDBPIN)))
+	}
+	if strings.TrimSpace(cfg.OMDBAPIKey) != "" {
+		opts = append(opts, tmdb.WithOMDBClient(metadata.NewOMDBClient(cfg.OMDBAPIKey)))
+	}
+	if client != nil || len(opts) > 0 {
+		scraper = tmdb.NewScraper(client, database, log, opts...)
 	}
 	a := &Admin{
 		db:        database,
@@ -78,9 +88,10 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 	}
 	settings := a.loadTMDBSettings(context.Background())
 	a.cfg.TMDBAutoScrape = settings.AutoScrape
-	if key := a.rawSetting(context.Background(), "tmdb_api_key", cfg.TMDBAPIKey); strings.TrimSpace(key) != "" {
-		a.rebuildTMDB(key, settings.Language)
-	}
+	a.cfg.TVDBAPIKey = a.rawSetting(context.Background(), "tvdb_api_key", cfg.TVDBAPIKey)
+	a.cfg.TVDBPIN = a.rawSetting(context.Background(), "tvdb_pin", cfg.TVDBPIN)
+	a.cfg.OMDBAPIKey = a.rawSetting(context.Background(), "omdb_api_key", cfg.OMDBAPIKey)
+	a.rebuildTMDB(a.rawSetting(context.Background(), "tmdb_api_key", cfg.TMDBAPIKey), settings.Language)
 	go a.startConfiguredWatchers()
 	return a
 }
@@ -285,17 +296,24 @@ func (a *Admin) APIKeyRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 type tmdbSettings struct {
-	APIKey     string `json:"api_key,omitempty"`
-	Configured bool   `json:"configured"`
-	Language   string `json:"language"`
-	AutoScrape bool   `json:"auto_scrape"`
+	APIKey         string `json:"api_key,omitempty"`
+	Configured     bool   `json:"configured"`
+	Language       string `json:"language"`
+	AutoScrape     bool   `json:"auto_scrape"`
+	TVDBConfigured bool   `json:"tvdb_configured"`
+	OMDBConfigured bool   `json:"omdb_configured"`
 }
 
 type tmdbSettingsRequest struct {
-	APIKey     string `json:"api_key"`
-	Language   string `json:"language"`
-	AutoScrape bool   `json:"auto_scrape"`
-	ClearKey   bool   `json:"clear_key"`
+	APIKey       string `json:"api_key"`
+	Language     string `json:"language"`
+	AutoScrape   bool   `json:"auto_scrape"`
+	ClearKey     bool   `json:"clear_key"`
+	TVDBAPIKey   string `json:"tvdb_api_key"`
+	TVDBPIN      string `json:"tvdb_pin"`
+	ClearTVDBKey bool   `json:"clear_tvdb_key"`
+	OMDBAPIKey   string `json:"omdb_api_key"`
+	ClearOMDBKey bool   `json:"clear_omdb_key"`
 }
 
 // TMDBSettingsGet returns the editable metadata settings, masking the token.
@@ -331,6 +349,22 @@ func (a *Admin) TMDBSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	} else if apiKey == "" {
 		apiKey = current
 	}
+	tvdbKey := strings.TrimSpace(body.TVDBAPIKey)
+	if body.ClearTVDBKey {
+		tvdbKey = ""
+	} else if tvdbKey == "" {
+		tvdbKey = a.rawSetting(r.Context(), "tvdb_api_key", a.cfg.TVDBAPIKey)
+	}
+	tvdbPIN := strings.TrimSpace(body.TVDBPIN)
+	if tvdbPIN == "" {
+		tvdbPIN = a.rawSetting(r.Context(), "tvdb_pin", a.cfg.TVDBPIN)
+	}
+	omdbKey := strings.TrimSpace(body.OMDBAPIKey)
+	if body.ClearOMDBKey {
+		omdbKey = ""
+	} else if omdbKey == "" {
+		omdbKey = a.rawSetting(r.Context(), "omdb_api_key", a.cfg.OMDBAPIKey)
+	}
 	if err := a.saveSetting(r.Context(), "tmdb_api_key", apiKey); err != nil {
 		WriteStatus(w, http.StatusInternalServerError)
 		return
@@ -343,9 +377,24 @@ func (a *Admin) TMDBSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
+	if err := a.saveSetting(r.Context(), "tvdb_api_key", tvdbKey); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if err := a.saveSetting(r.Context(), "tvdb_pin", tvdbPIN); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	if err := a.saveSetting(r.Context(), "omdb_api_key", omdbKey); err != nil {
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	a.cfg.TVDBAPIKey = tvdbKey
+	a.cfg.TVDBPIN = tvdbPIN
+	a.cfg.OMDBAPIKey = omdbKey
 	a.rebuildTMDB(apiKey, lang)
 	a.cfg.TMDBAutoScrape = body.AutoScrape
-	a.log.Info("tmdb settings updated", "category", "tmdb", "language", lang, "auto_scrape", body.AutoScrape, "configured", apiKey != "")
+	a.log.Info("metadata settings updated", "category", "tmdb", "language", lang, "auto_scrape", body.AutoScrape, "tmdb_configured", apiKey != "", "tvdb_configured", tvdbKey != "", "omdb_configured", omdbKey != "")
 	WriteJSON(w, http.StatusOK, a.loadTMDBSettings(r.Context()))
 }
 
@@ -389,6 +438,8 @@ func (a *Admin) TMDBSettingsTest(w http.ResponseWriter, r *http.Request) {
 
 func (a *Admin) loadTMDBSettings(ctx context.Context) tmdbSettings {
 	key := a.rawSetting(ctx, "tmdb_api_key", a.cfg.TMDBAPIKey)
+	tvdbKey := a.rawSetting(ctx, "tvdb_api_key", a.cfg.TVDBAPIKey)
+	omdbKey := a.rawSetting(ctx, "omdb_api_key", a.cfg.OMDBAPIKey)
 	lang := a.rawSetting(ctx, "tmdb_language", a.cfg.TMDBLanguage)
 	if strings.TrimSpace(lang) == "" {
 		lang = "zh-CN"
@@ -396,9 +447,11 @@ func (a *Admin) loadTMDBSettings(ctx context.Context) tmdbSettings {
 	autoRaw := a.rawSetting(ctx, "tmdb_auto_scrape", strconv.FormatBool(a.cfg.TMDBAutoScrape))
 	auto, _ := strconv.ParseBool(autoRaw)
 	return tmdbSettings{
-		Configured: strings.TrimSpace(key) != "",
-		Language:   lang,
-		AutoScrape: auto,
+		Configured:     strings.TrimSpace(key) != "",
+		Language:       lang,
+		AutoScrape:     auto,
+		TVDBConfigured: strings.TrimSpace(tvdbKey) != "",
+		OMDBConfigured: strings.TrimSpace(omdbKey) != "",
 	}
 }
 
@@ -424,13 +477,29 @@ func (a *Admin) rebuildTMDB(apiKey, language string) {
 	if a.tmdb != nil {
 		a.tmdb.Close()
 	}
+	opts := a.scraperOptions()
 	if strings.TrimSpace(apiKey) == "" {
 		a.tmdb = nil
-		a.scraper = nil
+		if len(opts) == 0 {
+			a.scraper = nil
+			return
+		}
+		a.scraper = tmdb.NewScraper(nil, a.db, a.log, opts...)
 		return
 	}
 	a.tmdb = tmdb.NewClient(apiKey, tmdb.WithLanguage(language))
-	a.scraper = tmdb.NewScraper(a.tmdb, a.db, a.log)
+	a.scraper = tmdb.NewScraper(a.tmdb, a.db, a.log, opts...)
+}
+
+func (a *Admin) scraperOptions() []tmdb.ScraperOption {
+	var opts []tmdb.ScraperOption
+	if strings.TrimSpace(a.cfg.TVDBAPIKey) != "" {
+		opts = append(opts, tmdb.WithTVDBClient(metadata.NewTVDBClient(a.cfg.TVDBAPIKey, a.cfg.TVDBPIN)))
+	}
+	if strings.TrimSpace(a.cfg.OMDBAPIKey) != "" {
+		opts = append(opts, tmdb.WithOMDBClient(metadata.NewOMDBClient(a.cfg.OMDBAPIKey)))
+	}
+	return opts
 }
 
 // LibrariesList returns every library (admin view).
@@ -685,6 +754,8 @@ type AdminMediaItem struct {
 	DateAir       string `json:"date_air,omitempty"`
 	Runtime       int64  `json:"runtime,omitempty"`
 	TMDBID        string `json:"tmdb_id,omitempty"`
+	IMDBID        string `json:"imdb_id,omitempty"`
+	TVDBID        string `json:"tvdb_id,omitempty"`
 	Overview      string `json:"overview,omitempty"`
 	Tagline       string `json:"tagline,omitempty"`
 	PosterURL     string `json:"poster_url,omitempty"`
@@ -815,6 +886,7 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 		like := "%" + search + "%"
 		args = append(args, like, like)
 	}
+	providerMissing := "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '')"
 	switch strings.ToLower(strings.TrimSpace(q.Get("missing"))) {
 	case "poster":
 		where = append(where, `NOT EXISTS (
@@ -823,10 +895,9 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 			  AND vi.type = 'Primary' AND vi.deleted_at IS NULL
 		)`)
 	case "info":
-		where = append(where, "(vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)")
+		where = append(where, "("+providerMissing+" OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)")
 	case "any":
-		where = append(where, `(
-			vl.tmdb_id IS NULL OR vl.tmdb_id = ''
+		where = append(where, `(`+providerMissing+`
 			OR vl.description IS NULL OR vl.description = ''
 			OR vl.date_air IS NULL
 			OR NOT EXISTS (
@@ -900,6 +971,8 @@ func (a *Admin) AdminMediaList(w http.ResponseWriter, r *http.Request) {
 			vl.title,
 			COALESCE(vl.origin_title, ''),
 			COALESCE(vl.tmdb_id, ''),
+			COALESCE(vl.imdb_id, ''),
+			COALESCE(vl.tvdb_id, ''),
 			COALESCE(vl.description, ''),
 			COALESCE(vl.tagline, ''),
 			vl.date_air,
@@ -964,6 +1037,8 @@ func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
 		args = append(args, typ)
 	}
 	whereSQL := strings.Join(where, " AND ")
+	providerMissing := "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '')"
+	providerPresent := "(COALESCE(vl.tmdb_id, '') <> '' OR COALESCE(vl.imdb_id, '') <> '' OR COALESCE(vl.tvdb_id, '') <> '')"
 	row := a.db.QueryRowContext(r.Context(), `
 		WITH primary_images AS (
 			SELECT vi.relation_id
@@ -975,11 +1050,11 @@ func (a *Admin) AdminMediaStats(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT
 			COUNT(*) AS total,
-			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> '') AS scraped,
-			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') = '') AS unscraped,
+			COUNT(*) FILTER (WHERE `+providerPresent+`) AS scraped,
+			COUNT(*) FILTER (WHERE `+providerMissing+`) AS unscraped,
 			COUNT(*) FILTER (WHERE pi.relation_id IS NULL) AS missing_poster,
-			COUNT(*) FILTER (WHERE vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL) AS missing_info,
-			COUNT(*) FILTER (WHERE COALESCE(vl.tmdb_id, '') <> ''
+			COUNT(*) FILTER (WHERE `+providerMissing+` OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL) AS missing_info,
+			COUNT(*) FILTER (WHERE `+providerPresent+`
 				AND COALESCE(vl.description, '') <> ''
 				AND vl.date_air IS NOT NULL
 				AND pi.relation_id IS NOT NULL
@@ -1035,6 +1110,8 @@ type adminMediaUpdateRequest struct {
 	Title         *string `json:"title"`
 	OriginalTitle *string `json:"original_title"`
 	TMDBID        *string `json:"tmdb_id"`
+	IMDBID        *string `json:"imdb_id"`
+	TVDBID        *string `json:"tvdb_id"`
 	Overview      *string `json:"overview"`
 	Tagline       *string `json:"tagline"`
 	DateAir       *string `json:"date_air"`
@@ -1086,6 +1163,14 @@ func (a *Admin) AdminMediaUpdate(w http.ResponseWriter, r *http.Request) {
 	if body.TMDBID != nil {
 		updates = append(updates, "tmdb_id = ?")
 		args = append(args, nullableString(*body.TMDBID))
+	}
+	if body.IMDBID != nil {
+		updates = append(updates, "imdb_id = ?")
+		args = append(args, nullableString(*body.IMDBID))
+	}
+	if body.TVDBID != nil {
+		updates = append(updates, "tvdb_id = ?")
+		args = append(args, nullableString(*body.TVDBID))
 	}
 	if body.Overview != nil {
 		updates = append(updates, "description = ?")
@@ -1374,6 +1459,8 @@ func (a *Admin) adminMediaOne(ctx context.Context, id int64) (*AdminMediaItem, e
 			vl.title,
 			COALESCE(vl.origin_title, ''),
 			COALESCE(vl.tmdb_id, ''),
+			COALESCE(vl.imdb_id, ''),
+			COALESCE(vl.tvdb_id, ''),
 			COALESCE(vl.description, ''),
 			COALESCE(vl.tagline, ''),
 			vl.date_air,
@@ -1426,6 +1513,8 @@ func scanAdminMediaItem(rows interface {
 		item         AdminMediaItem
 		originTitle  string
 		tmdbID       string
+		imdbID       string
+		tvdbID       string
 		overview     string
 		tagline      string
 		dateAir      sql.NullTime
@@ -1438,7 +1527,7 @@ func scanAdminMediaItem(rows interface {
 	)
 	if err := rows.Scan(
 		&item.ID, &item.LibraryID, &item.Type, &item.Title,
-		&originTitle, &tmdbID, &overview, &tagline, &dateAir, &runtime, &updatedAt,
+		&originTitle, &tmdbID, &imdbID, &tvdbID, &overview, &tagline, &dateAir, &runtime, &updatedAt,
 		&item.MediaCount, &item.SeasonCount, &item.EpisodeCount,
 		&posterType, &posterPath, &backdropType, &backdropPath,
 	); err != nil {
@@ -1447,6 +1536,8 @@ func scanAdminMediaItem(rows interface {
 	item.ItemID = emby.ItemID(emby.ItemIDTypeVideoList, item.ID)
 	item.OriginalTitle = originTitle
 	item.TMDBID = tmdbID
+	item.IMDBID = imdbID
+	item.TVDBID = tvdbID
 	item.Overview = overview
 	item.Tagline = tagline
 	item.Runtime = runtime
@@ -1460,7 +1551,7 @@ func scanAdminMediaItem(rows interface {
 	item.PosterURL = adminImageURL(posterType, posterPath, item.ItemID, db.ImageTypePrimary)
 	item.BackdropURL = adminImageURL(backdropType, backdropPath, item.ItemID, db.ImageTypeBackdrop)
 	item.MissingPoster = item.PosterURL == ""
-	item.MissingInfo = item.TMDBID == "" || item.Overview == "" || item.DateAir == ""
+	item.MissingInfo = (item.TMDBID == "" && item.IMDBID == "" && item.TVDBID == "") || item.Overview == "" || item.DateAir == ""
 	return item, nil
 }
 
@@ -2549,7 +2640,7 @@ func (a *Admin) TMDBRefreshOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.scraper == nil || !a.scraper.Enabled() {
-		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		WriteText(w, http.StatusServiceUnavailable, "metadata scraper disabled: set TMDB_API_KEY, TVDB_API_KEY, or OMDB_API_KEY")
 		return
 	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -2848,7 +2939,7 @@ func (a *Admin) TMDBRefreshAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.scraper == nil || !a.scraper.Enabled() {
-		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		WriteText(w, http.StatusServiceUnavailable, "metadata scraper disabled: set TMDB_API_KEY, TVDB_API_KEY, or OMDB_API_KEY")
 		return
 	}
 	var body tmdbRefreshAllRequest
@@ -2877,7 +2968,7 @@ func (a *Admin) TMDBRefreshAllStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.scraper == nil || !a.scraper.Enabled() {
-		WriteText(w, http.StatusServiceUnavailable, "TMDB disabled: set TMDB_API_KEY")
+		WriteText(w, http.StatusServiceUnavailable, "metadata scraper disabled: set TMDB_API_KEY, TVDB_API_KEY, or OMDB_API_KEY")
 		return
 	}
 	var body tmdbRefreshAllRequest

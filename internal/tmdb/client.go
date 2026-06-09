@@ -293,13 +293,28 @@ func (c *Client) SearchTV(ctx context.Context, query string, year int) ([]Search
 
 // FindByIMDB looks up a movie or TV show by IMDB id.
 func (c *Client) FindByIMDB(ctx context.Context, imdbID string) (movies, tvs []SearchResult, err error) {
+	return c.FindByExternalID(ctx, imdbID, "imdb_id")
+}
+
+// FindByTVDB looks up a movie or TV show by TheTVDB id.
+func (c *Client) FindByTVDB(ctx context.Context, tvdbID string) (movies, tvs []SearchResult, err error) {
+	return c.FindByExternalID(ctx, tvdbID, "tvdb_id")
+}
+
+// FindByExternalID looks up TMDB entries through /find/{external_id}.
+func (c *Client) FindByExternalID(ctx context.Context, externalID, externalSource string) (movies, tvs []SearchResult, err error) {
+	externalID = strings.TrimSpace(externalID)
+	externalSource = strings.TrimSpace(externalSource)
+	if externalID == "" || externalSource == "" {
+		return nil, nil, ErrNotFound
+	}
 	q := url.Values{}
-	q.Set("external_source", "imdb_id")
+	q.Set("external_source", externalSource)
 	var resp struct {
 		MovieResults []SearchResult `json:"movie_results"`
 		TVResults    []SearchResult `json:"tv_results"`
 	}
-	if err := c.do(ctx, "/find/"+imdbID, q, &resp); err != nil {
+	if err := c.do(ctx, "/find/"+url.PathEscape(externalID), q, &resp); err != nil {
 		return nil, nil, err
 	}
 	return resp.MovieResults, resp.TVResults, nil

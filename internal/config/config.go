@@ -47,6 +47,11 @@ type Config struct {
 	// TMDBAutoScrape controls whether the library scanner automatically
 	// scrapes TMDB metadata for each newly-imported item.
 	TMDBAutoScrape bool
+	// TVDBAPIKey enables TheTVDB v4 fallback metadata for series.
+	TVDBAPIKey string
+	TVDBPIN    string
+	// OMDBAPIKey enables OMDb fallback metadata, especially for IMDb-based lookups.
+	OMDBAPIKey string
 
 	SearchDefaultList string
 
@@ -92,6 +97,9 @@ func Load() *Config {
 		TMDBAPIKey:     getEnv("TMDB_API_KEY", ""),
 		TMDBLanguage:   getEnv("TMDB_LANGUAGE", "zh-CN"),
 		TMDBAutoScrape: strings.EqualFold(getEnv("TMDB_AUTO_SCRAPE", "true"), "true"),
+		TVDBAPIKey:     getEnv("TVDB_API_KEY", ""),
+		TVDBPIN:        getEnv("TVDB_PIN", ""),
+		OMDBAPIKey:     getEnv("OMDB_API_KEY", ""),
 
 		SearchDefaultList: getEnv("SEARCH_DEFAULT_LIST", `{"欢迎来到 emotion":1}`),
 

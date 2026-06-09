@@ -9,9 +9,9 @@ import (
 
 // Regexes compiled once at package load.
 var (
-	// Provider id tag like [tmdb=502419] or [tmdbid-502419] or [imdb=tt1234567].
-	// Case-insensitive, accepts = or -.
-	reProviderTag = regexp.MustCompile(`(?i)\[(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[=\-:]\s*([a-z0-9]+)\]`)
+	// Provider id tag like [tmdb=502419], {tmdb-502419}, or [imdb=tt1234567].
+	// Case-insensitive, accepts =, - or : separators and common bracket styles.
+	reProviderTag = regexp.MustCompile(`(?i)[\[\(\{【（]\s*(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[=\-:]\s*([a-z0-9]+)\s*[\]\)\}】）]`)
 	// "Movie Title (2023)" or "Movie Title [2023]"
 	reTitleYear = regexp.MustCompile(`^(?P<title>.+?)[\s._]*[\(\[](?P<year>(19|20)\d{2})[\)\]]`)
 	// "Show.Name.S01E02" / "Show Name - S01E02" / "Show Season 1 Episode 2" / "Show.Name.1x02"
@@ -40,7 +40,7 @@ type ParsedName struct {
 	// "01.mkv". Callers should require extra TV context before classifying it as
 	// an episode.
 	WeakEpisode bool
-	// Provider-assigned ids found in "[tmdb=N]" / "[imdb=ttN]" / "[tvdb=N]" tags.
+	// Provider-assigned ids found in "[tmdb=N]" / "{imdb-ttN}" / "[tvdb=N]" tags.
 	TMDBID string
 	IMDBID string
 	TVDBID string

@@ -35,6 +35,9 @@ services:
       TMDB_API_KEY: ""
       TMDB_LANGUAGE: zh-CN
       TMDB_AUTO_SCRAPE: "true"
+      TVDB_API_KEY: ""
+      TVDB_PIN: ""
+      OMDB_API_KEY: ""
 
       EMBY_VERSION: 4.8.10.0
       EMBY_ID: emotion

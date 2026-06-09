@@ -16,6 +16,7 @@ import (
 
 	"github.com/PivKeyU/Emotion/internal/db"
 	"github.com/PivKeyU/Emotion/internal/emby"
+	"github.com/PivKeyU/Emotion/internal/metadata"
 )
 
 // Scraper fills in missing metadata on existing video_list / video_season /
@@ -24,39 +25,63 @@ import (
 // Policy:
 //   - We NEVER overwrite a non-null user-provided field. Scraper is purely additive.
 //   - When a row already has tmdb_id, we use it directly.
-//   - Otherwise we search by title + year; a match requires a year exact match
-//     OR (when no year) a title substring overlap.
+//   - Otherwise we try IMDb/TVDB external-id lookup before title + year search.
+//   - If TMDB cannot be resolved, optional TVDB/OMDb clients may fill basic
+//     fallback metadata without season/episode synthesis.
 //   - Images are attached only when there is no existing video_image row of
 //     the same type.
 //   - All DB work is idempotent so operators can rerun scrape safely.
 type Scraper struct {
 	client *Client
+	tvdb   *metadata.TVDBClient
+	omdb   *metadata.OMDBClient
 	db     *db.DB
 	log    *slog.Logger
 }
 
+// ScraperOption configures provider fallback behavior.
+type ScraperOption func(*Scraper)
+
+func WithTVDBClient(client *metadata.TVDBClient) ScraperOption {
+	return func(s *Scraper) { s.tvdb = client }
+}
+
+func WithOMDBClient(client *metadata.OMDBClient) ScraperOption {
+	return func(s *Scraper) { s.omdb = client }
+}
+
 // NewScraper wires up a scraper. tmdb may be nil if disabled (methods become no-ops).
-func NewScraper(tmdb *Client, database *db.DB, log *slog.Logger) *Scraper {
-	return &Scraper{client: tmdb, db: database, log: log}
+func NewScraper(tmdb *Client, database *db.DB, log *slog.Logger, opts ...ScraperOption) *Scraper {
+	s := &Scraper{client: tmdb, db: database, log: log}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Enabled mirrors the underlying client's state.
-func (s *Scraper) Enabled() bool { return s != nil && s.client != nil && s.client.Enabled() }
+func (s *Scraper) Enabled() bool {
+	return s != nil && ((s.client != nil && s.client.Enabled()) ||
+		(s.tvdb != nil && s.tvdb.Enabled()) ||
+		(s.omdb != nil && s.omdb.Enabled()))
+}
 
 // ScrapeResult is the summary of a single list (movie/series) scrape.
 type ScrapeResult struct {
-	VideoListID     int64  `json:"video_list_id"`
-	VideoType       string `json:"video_type,omitempty"`
-	Title           string `json:"title,omitempty"`
-	MatchedTMDBID   string `json:"matched_tmdb_id,omitempty"`
-	MatchedTitle    string `json:"matched_title,omitempty"`
-	UpdatedFields   int    `json:"updated_fields"`
-	ImagesAttached  int    `json:"images_attached"`
-	SeasonsUpdated  int    `json:"seasons_updated"`
-	EpisodesUpdated int    `json:"episodes_updated"`
-	Failed          bool   `json:"failed,omitempty"`
-	Skipped         bool   `json:"skipped,omitempty"`
-	Reason          string `json:"reason,omitempty"`
+	VideoListID       int64  `json:"video_list_id"`
+	VideoType         string `json:"video_type,omitempty"`
+	Title             string `json:"title,omitempty"`
+	MatchedTMDBID     string `json:"matched_tmdb_id,omitempty"`
+	MatchedProvider   string `json:"matched_provider,omitempty"`
+	MatchedExternalID string `json:"matched_external_id,omitempty"`
+	MatchedTitle      string `json:"matched_title,omitempty"`
+	UpdatedFields     int    `json:"updated_fields"`
+	ImagesAttached    int    `json:"images_attached"`
+	SeasonsUpdated    int    `json:"seasons_updated"`
+	EpisodesUpdated   int    `json:"episodes_updated"`
+	Failed            bool   `json:"failed,omitempty"`
+	Skipped           bool   `json:"skipped,omitempty"`
+	Reason            string `json:"reason,omitempty"`
 }
 
 // BatchResult aggregates ScrapeResult for a bulk run.
@@ -96,13 +121,14 @@ var (
 	tmdbReleaseNoiseRe   = regexp.MustCompile(`(?i)\b(1080p|2160p|720p|4k|8k|hdr|web[-_. ]?dl|b[dr]rip|bluray|x264|x265|h264|h265|hevc|avc|aac|flac|gb|big5)\b|简繁|简体|繁体|字幕|合集|全集|内封|外挂|无修|NCOP|NCED`)
 	tmdbEmptyBracketRe   = regexp.MustCompile(`[\[\(【（{]\s*[\]\)】）}]`)
 	tmdbSpaceRe          = regexp.MustCompile(`[\s._\-+~:：/\\|]+`)
+	tmdbProviderTagRe    = regexp.MustCompile(`(?i)[\[\(\{【（]\s*(tmdb|tmdbid|imdb|imdbid|tvdb|tvdbid)\s*[=\-:]\s*([a-z0-9]+)\s*[\]\)\}】）]`)
 )
 
 // ScrapeVideoList refreshes the metadata for a single video_list row.
 // When ForceOverride is true, existing non-null fields ARE overwritten.
 func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceOverride bool) (*ScrapeResult, error) {
 	if !s.Enabled() {
-		return nil, errors.New("tmdb scraper disabled: set TMDB_API_KEY")
+		return nil, errors.New("metadata scraper disabled: set TMDB_API_KEY, TVDB_API_KEY, or OMDB_API_KEY")
 	}
 
 	res := &ScrapeResult{VideoListID: videoListID}
@@ -110,6 +136,8 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 	var (
 		videoType   string
 		tmdbID      sql.NullString
+		imdbID      sql.NullString
+		tvdbID      sql.NullString
 		title       string
 		originTitle sql.NullString
 		description sql.NullString
@@ -118,28 +146,50 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		tagline     sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT video_type, tmdb_id, title, origin_title, description, date_air, runtime, tagline
+		SELECT video_type, tmdb_id, imdb_id, tvdb_id, title, origin_title, description, date_air, runtime, tagline
 		FROM video_list WHERE id = ? AND deleted_at IS NULL LIMIT 1
-	`, videoListID).Scan(&videoType, &tmdbID, &title, &originTitle, &description, &dateAir, &runtime, &tagline)
+	`, videoListID).Scan(&videoType, &tmdbID, &imdbID, &tvdbID, &title, &originTitle, &description, &dateAir, &runtime, &tagline)
 	if err != nil {
 		return nil, fmt.Errorf("load video_list: %w", err)
 	}
 	res.VideoType = videoType
 	res.Title = title
 
+	applyTitleProviderHints(&tmdbID, &imdbID, &tvdbID, title, originTitle.String)
+
 	// Step 1: resolve a TMDB id.
-	resolvedID, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, title, originTitle.String, yearOfTime(dateAir))
+	resolved, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, imdbID.String, tvdbID.String, title, originTitle.String, yearOfTime(dateAir))
 	if err != nil {
 		res.Skipped = true
 		res.Reason = err.Error()
 		return res, nil
 	}
-	if resolvedID == 0 {
-		res.Skipped = true
-		res.Reason = "no TMDB match"
-		return res, nil
+	if resolved.ID == 0 {
+		fallback, fallbackID, err := s.resolveFallbackMetadata(ctx, videoType, imdbID.String, tvdbID.String, title, originTitle.String, yearOfTime(dateAir))
+		if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+			res.Skipped = true
+			res.Reason = err.Error()
+			return res, nil
+		}
+		if fallbackID.ID > 0 {
+			resolved = fallbackID
+		} else if fallback != nil {
+			if err := s.applyExternalMetadata(ctx, videoListID, videoType, fallback, res,
+				tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
+				forceOverride); err != nil {
+				return nil, err
+			}
+			return res, nil
+		} else {
+			res.Skipped = true
+			res.Reason = "no metadata match"
+			return res, nil
+		}
 	}
+	resolvedID := resolved.ID
 	res.MatchedTMDBID = strconv.FormatInt(resolvedID, 10)
+	res.MatchedProvider = resolved.Source
+	res.MatchedExternalID = resolved.ExternalID
 
 	// Step 2: fetch details and apply.
 	if videoType == db.VideoTypeMovie {
@@ -150,7 +200,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		s.fillMovieFallback(ctx, resolvedID, movie)
 		res.MatchedTitle = movie.Title
 		if err := s.applyMovie(ctx, videoListID, movie, res,
-			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
+			tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
 			return nil, err
 		}
@@ -162,7 +212,7 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		s.fillTVFallback(ctx, resolvedID, show)
 		res.MatchedTitle = show.Name
 		if err := s.applyTV(ctx, videoListID, show, res,
-			tmdbID, title, originTitle, description, dateAir, runtime, tagline,
+			tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
 			return nil, err
 		}
@@ -171,28 +221,97 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 	return res, nil
 }
 
-// resolveTMDBID returns a TMDB id if existing or searched.
-func (s *Scraper) resolveTMDBID(ctx context.Context, videoType, existing, title, originTitle string, year int) (int64, error) {
+type tmdbResolution struct {
+	ID         int64
+	Source     string
+	ExternalID string
+}
+
+// resolveTMDBID returns a TMDB id if existing, externally mapped, or searched.
+func (s *Scraper) resolveTMDBID(ctx context.Context, videoType, existing, imdbID, tvdbID, title, originTitle string, year int) (tmdbResolution, error) {
+	if s.client == nil || !s.client.Enabled() {
+		return tmdbResolution{}, nil
+	}
 	if existing != "" {
 		if id, err := strconv.ParseInt(existing, 10, 64); err == nil && id > 0 {
-			return id, nil
+			return tmdbResolution{ID: id, Source: "tmdb", ExternalID: existing}, nil
 		}
+	}
+	if id, err := s.findTMDBByIMDB(ctx, videoType, imdbID, title, year); err != nil {
+		return tmdbResolution{}, err
+	} else if id > 0 {
+		return tmdbResolution{ID: id, Source: "imdb", ExternalID: imdbID}, nil
+	}
+	if id, err := s.findTMDBByTVDB(ctx, videoType, tvdbID, title, year); err != nil {
+		return tmdbResolution{}, err
+	} else if id > 0 {
+		return tmdbResolution{ID: id, Source: "tvdb", ExternalID: tvdbID}, nil
 	}
 	candidates := tmdbTitleCandidates(title, originTitle)
 	if len(candidates) == 0 {
-		return 0, errors.New("title empty; cannot search")
+		return tmdbResolution{}, nil
 	}
 
 	for _, candidate := range candidates {
 		id, err := s.searchTMDBCandidate(ctx, videoType, candidate, year)
 		if err != nil {
-			return 0, err
+			return tmdbResolution{}, err
 		}
 		if id > 0 {
-			return id, nil
+			return tmdbResolution{ID: id, Source: "tmdb_search"}, nil
 		}
 	}
-	return 0, nil
+	return tmdbResolution{}, nil
+}
+
+func (s *Scraper) findTMDBByIMDB(ctx context.Context, videoType, imdbID, title string, year int) (int64, error) {
+	imdbID = strings.TrimSpace(imdbID)
+	if imdbID == "" || s.client == nil || !s.client.Enabled() {
+		return 0, nil
+	}
+	movies, tvs, err := s.client.FindByIMDB(ctx, imdbID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return bestExternalTMDBResult(videoType, movies, tvs, title, year), nil
+}
+
+func (s *Scraper) findTMDBByTVDB(ctx context.Context, videoType, tvdbID, title string, year int) (int64, error) {
+	tvdbID = strings.TrimSpace(tvdbID)
+	if tvdbID == "" || s.client == nil || !s.client.Enabled() {
+		return 0, nil
+	}
+	movies, tvs, err := s.client.FindByTVDB(ctx, tvdbID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return bestExternalTMDBResult(videoType, movies, tvs, title, year), nil
+}
+
+func bestExternalTMDBResult(videoType string, movies, tvs []SearchResult, title string, year int) int64 {
+	var results []SearchResult
+	if videoType == db.VideoTypeMovie {
+		results = movies
+	} else {
+		results = tvs
+	}
+	if len(results) == 0 {
+		if videoType == db.VideoTypeMovie {
+			results = tvs
+		} else {
+			results = movies
+		}
+	}
+	if len(results) == 0 {
+		return 0
+	}
+	return bestTMDBSearchResult(results, title, year).ID
 }
 
 func (s *Scraper) searchTMDBCandidate(ctx context.Context, videoType, title string, year int) (int64, error) {
@@ -226,6 +345,176 @@ func (s *Scraper) searchTMDB(ctx context.Context, videoType, title string, year 
 		return nil, err
 	}
 	return results, nil
+}
+
+func (s *Scraper) resolveFallbackMetadata(ctx context.Context, videoType, imdbID, tvdbID, title, originTitle string, year int) (*metadata.BasicMetadata, tmdbResolution, error) {
+	var best *metadata.BasicMetadata
+
+	if videoType == db.VideoTypeTV && s.tvdb != nil && s.tvdb.Enabled() {
+		if strings.TrimSpace(tvdbID) != "" {
+			item, err := s.tvdb.GetSeriesByID(ctx, tvdbID)
+			if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+				return nil, tmdbResolution{}, err
+			}
+			if item != nil {
+				if id, err := s.findTMDBFromBasic(ctx, videoType, item, title, year); err != nil {
+					return nil, tmdbResolution{}, err
+				} else if id.ID > 0 {
+					return nil, id, nil
+				}
+				best = item
+			}
+		}
+		if strings.TrimSpace(imdbID) != "" {
+			items, err := s.tvdb.FindByIMDB(ctx, imdbID)
+			if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+				return nil, tmdbResolution{}, err
+			}
+			if picked := pickTVDBBasic(items); picked != nil {
+				if id, err := s.findTMDBFromBasic(ctx, videoType, picked, title, year); err != nil {
+					return nil, tmdbResolution{}, err
+				} else if id.ID > 0 {
+					return nil, id, nil
+				}
+				if best == nil {
+					best = picked
+				}
+			}
+		}
+		for _, candidate := range tmdbTitleCandidates(title, originTitle) {
+			items, err := s.tvdb.SearchSeriesByTitle(ctx, candidate, year)
+			if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+				return nil, tmdbResolution{}, err
+			}
+			if picked := pickTVDBBasic(items); picked != nil {
+				if id, err := s.findTMDBFromBasic(ctx, videoType, picked, candidate, year); err != nil {
+					return nil, tmdbResolution{}, err
+				} else if id.ID > 0 {
+					return nil, id, nil
+				}
+				if best == nil {
+					best = picked
+				}
+				break
+			}
+		}
+	}
+
+	if s.omdb != nil && s.omdb.Enabled() {
+		if strings.TrimSpace(imdbID) != "" {
+			item, err := s.omdb.GetByIMDB(ctx, imdbID)
+			if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+				return nil, tmdbResolution{}, err
+			}
+			if item != nil {
+				if id, err := s.findTMDBFromBasic(ctx, videoType, item, title, year); err != nil {
+					return nil, tmdbResolution{}, err
+				} else if id.ID > 0 {
+					return nil, id, nil
+				}
+				if best == nil {
+					best = item
+				}
+			}
+		}
+		for _, candidate := range tmdbTitleCandidates(title, originTitle) {
+			item, err := s.omdb.SearchByTitle(ctx, candidate, year, videoType)
+			if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+				return nil, tmdbResolution{}, err
+			}
+			if item != nil {
+				if id, err := s.findTMDBFromBasic(ctx, videoType, item, candidate, year); err != nil {
+					return nil, tmdbResolution{}, err
+				} else if id.ID > 0 {
+					return nil, id, nil
+				}
+				if best == nil {
+					best = item
+				}
+				break
+			}
+		}
+	}
+
+	if best != nil {
+		return best, tmdbResolution{}, nil
+	}
+	return nil, tmdbResolution{}, metadata.ErrNotFound
+}
+
+func (s *Scraper) findTMDBFromBasic(ctx context.Context, videoType string, item *metadata.BasicMetadata, query string, year int) (tmdbResolution, error) {
+	if item == nil || s.client == nil || !s.client.Enabled() {
+		return tmdbResolution{}, nil
+	}
+	if item.TVDBID != "" {
+		id, err := s.findTMDBByTVDB(ctx, videoType, item.TVDBID, firstNonEmptyString(query, item.Title), year)
+		if err != nil {
+			return tmdbResolution{}, err
+		}
+		if id > 0 {
+			return tmdbResolution{ID: id, Source: item.Source, ExternalID: item.TVDBID}, nil
+		}
+	}
+	if item.IMDBID != "" {
+		id, err := s.findTMDBByIMDB(ctx, videoType, item.IMDBID, firstNonEmptyString(query, item.Title), year)
+		if err != nil {
+			return tmdbResolution{}, err
+		}
+		if id > 0 {
+			return tmdbResolution{ID: id, Source: item.Source, ExternalID: item.IMDBID}, nil
+		}
+	}
+	return tmdbResolution{}, nil
+}
+
+func pickTVDBBasic(items []metadata.BasicMetadata) *metadata.BasicMetadata {
+	if len(items) == 0 {
+		return nil
+	}
+	for i := range items {
+		if strings.EqualFold(items[i].MediaType, "series") || strings.EqualFold(items[i].MediaType, "tv") {
+			return &items[i]
+		}
+	}
+	return &items[0]
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func applyTitleProviderHints(tmdbID, imdbID, tvdbID *sql.NullString, values ...string) {
+	for _, value := range values {
+		for _, m := range tmdbProviderTagRe.FindAllStringSubmatch(value, -1) {
+			if len(m) != 3 {
+				continue
+			}
+			kind := strings.ToLower(strings.TrimSpace(m[1]))
+			id := strings.TrimSpace(m[2])
+			if id == "" {
+				continue
+			}
+			switch kind {
+			case "tmdb", "tmdbid":
+				if tmdbID != nil && (!tmdbID.Valid || strings.TrimSpace(tmdbID.String) == "") {
+					*tmdbID = sql.NullString{Valid: true, String: id}
+				}
+			case "imdb", "imdbid":
+				if imdbID != nil && (!imdbID.Valid || strings.TrimSpace(imdbID.String) == "") {
+					*imdbID = sql.NullString{Valid: true, String: id}
+				}
+			case "tvdb", "tvdbid":
+				if tvdbID != nil && (!tvdbID.Valid || strings.TrimSpace(tvdbID.String) == "") {
+					*tvdbID = sql.NullString{Valid: true, String: id}
+				}
+			}
+		}
+	}
 }
 
 func (s *Scraper) fillMovieFallback(ctx context.Context, tmdbID int64, movie *Movie) {
@@ -457,17 +746,77 @@ func absInt(v int) int {
 	return v
 }
 
+func formatOptionalInt64(v int64) string {
+	if v <= 0 {
+		return ""
+	}
+	return strconv.FormatInt(v, 10)
+}
+
+func providerImagePathType(path string) string {
+	switch {
+	case strings.HasPrefix(path, "/") && !strings.Contains(path, "://"):
+		return db.ImagePathTypeTMDB
+	case strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://"):
+		if strings.Contains(strings.ToLower(path), "douban") {
+			return db.ImagePathTypeDouban
+		}
+		return db.ImagePathTypeURL
+	default:
+		return db.PathTypeLocal
+	}
+}
+
+func appendScrapeReason(current, extra string) string {
+	current = strings.TrimSpace(current)
+	extra = strings.TrimSpace(extra)
+	if current == "" {
+		return extra
+	}
+	if extra == "" {
+		return current
+	}
+	return current + "; " + extra
+}
+
+func (s *Scraper) tmdbIDConflictOwner(ctx context.Context, videoListID int64, videoType, tmdbID string) (int64, error) {
+	tmdbID = strings.TrimSpace(tmdbID)
+	if tmdbID == "" || s.db == nil {
+		return 0, nil
+	}
+	var ownerID int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM video_list
+		WHERE id <> ? AND video_type = ? AND tmdb_id = ?
+		LIMIT 1
+	`, videoListID, videoType, tmdbID).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("check tmdb_id conflict: %w", err)
+	}
+	return ownerID, nil
+}
+
 // applyMovie writes TMDB fields onto video_list and video_image.
 func (s *Scraper) applyMovie(
 	ctx context.Context, videoListID int64, m *Movie, res *ScrapeResult,
-	curTmdb sql.NullString, curTitle string,
+	curTmdb, curIMDB, curTVDB sql.NullString, curTitle string,
 	curOrigin, curDesc sql.NullString, curAir sql.NullTime,
 	curRuntime sql.NullInt64, curTagline sql.NullString,
 	force bool,
 ) error {
+	newTmdb := strconv.FormatInt(m.ID, 10)
+	if ownerID, err := s.tmdbIDConflictOwner(ctx, videoListID, db.VideoTypeMovie, newTmdb); err != nil {
+		return err
+	} else if ownerID > 0 {
+		newTmdb = ""
+		res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("tmdb_id already used by video_list_id=%d; metadata updated without changing tmdb_id", ownerID))
+	}
 	updates, args := buildVideoListUpdates(
-		curTmdb, curTitle, curOrigin, curDesc, curAir, curRuntime, curTagline,
-		strconv.FormatInt(m.ID, 10), m.Title, m.OriginalTitle,
+		curTmdb, curIMDB, curTVDB, curTitle, curOrigin, curDesc, curAir, curRuntime, curTagline,
+		newTmdb, m.IMDBID, "", m.Title, m.OriginalTitle,
 		m.Overview, parseDateOrZero(m.ReleaseDate), m.Runtime, m.Tagline,
 		force,
 	)
@@ -487,7 +836,7 @@ func (s *Scraper) applyMovie(
 // applyTV writes TMDB fields plus optional seasons/episodes.
 func (s *Scraper) applyTV(
 	ctx context.Context, videoListID int64, t *TVShow, res *ScrapeResult,
-	curTmdb sql.NullString, curTitle string,
+	curTmdb, curIMDB, curTVDB sql.NullString, curTitle string,
 	curOrigin, curDesc sql.NullString, curAir sql.NullTime,
 	curRuntime sql.NullInt64, curTagline sql.NullString,
 	force bool,
@@ -496,9 +845,16 @@ func (s *Scraper) applyTV(
 	if len(t.EpisodeRuntime) > 0 {
 		runtime = t.EpisodeRuntime[0]
 	}
+	newTmdb := strconv.FormatInt(t.ID, 10)
+	if ownerID, err := s.tmdbIDConflictOwner(ctx, videoListID, db.VideoTypeTV, newTmdb); err != nil {
+		return err
+	} else if ownerID > 0 {
+		newTmdb = ""
+		res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("tmdb_id already used by video_list_id=%d; metadata updated without changing tmdb_id", ownerID))
+	}
 	updates, args := buildVideoListUpdates(
-		curTmdb, curTitle, curOrigin, curDesc, curAir, curRuntime, curTagline,
-		strconv.FormatInt(t.ID, 10), t.Name, t.OriginalName,
+		curTmdb, curIMDB, curTVDB, curTitle, curOrigin, curDesc, curAir, curRuntime, curTagline,
+		newTmdb, t.ExternalIDs.IMDBID, formatOptionalInt64(t.ExternalIDs.TVDBID), t.Name, t.OriginalName,
 		t.Overview, parseDateOrZero(t.FirstAirDate), runtime, t.Tagline,
 		force,
 	)
@@ -516,6 +872,49 @@ func (s *Scraper) applyTV(
 	// the DB; we don't synthesize new seasons from TMDB because the source of
 	// truth for "what exists" is the operator's filesystem.
 	res.SeasonsUpdated, res.EpisodesUpdated = s.syncSeasonsAndEpisodes(ctx, videoListID, t, force)
+	return nil
+}
+
+func (s *Scraper) applyExternalMetadata(
+	ctx context.Context, videoListID int64, videoType string, item *metadata.BasicMetadata, res *ScrapeResult,
+	curTmdb, curIMDB, curTVDB sql.NullString, curTitle string,
+	curOrigin, curDesc sql.NullString, curAir sql.NullTime,
+	curRuntime sql.NullInt64, curTagline sql.NullString,
+	force bool,
+) error {
+	if item == nil {
+		return nil
+	}
+	res.MatchedProvider = item.Source
+	res.MatchedExternalID = firstNonEmptyString(item.ProviderID, item.IMDBID, item.TVDBID)
+	res.MatchedTitle = item.Title
+	updates, args := buildVideoListUpdates(
+		curTmdb, curIMDB, curTVDB, curTitle, curOrigin, curDesc, curAir, curRuntime, curTagline,
+		"", item.IMDBID, item.TVDBID, item.Title, item.OriginalTitle,
+		item.Overview, item.AirDate, item.Runtime, item.Tagline,
+		force,
+	)
+	if len(updates) > 0 {
+		stmt := "UPDATE video_list SET " + strings.Join(updates, ", ") + " WHERE id = ?"
+		args = append(args, videoListID)
+		if _, err := s.db.ExecContext(ctx, stmt, args...); err != nil {
+			return fmt.Errorf("update video_list fallback: %w", err)
+		}
+		res.UpdatedFields = len(updates)
+	}
+	if item.PosterURL != "" {
+		if s.ensureImage(ctx, db.ImageTypePrimary, emby.ItemIDTypeVideoList, videoListID, providerImagePathType(item.PosterURL), item.PosterURL) {
+			res.ImagesAttached++
+		}
+	}
+	if item.BackdropURL != "" {
+		if s.ensureImage(ctx, db.ImageTypeBackdrop, emby.ItemIDTypeVideoList, videoListID, providerImagePathType(item.BackdropURL), item.BackdropURL) {
+			res.ImagesAttached++
+		}
+	}
+	if videoType == db.VideoTypeTV {
+		res.Reason = "fallback metadata only; TMDB season/episode sync unavailable"
+	}
 	return nil
 }
 
@@ -711,9 +1110,9 @@ func (s *Scraper) ensureImage(ctx context.Context, imgType, relType string, relI
 // buildVideoListUpdates decides which columns to touch, honoring the "don't
 // overwrite operator data" rule unless force is set.
 func buildVideoListUpdates(
-	curTmdb sql.NullString, curTitle string, curOrigin, curDesc sql.NullString,
+	curTmdb, curIMDB, curTVDB sql.NullString, curTitle string, curOrigin, curDesc sql.NullString,
 	curAir sql.NullTime, curRuntime sql.NullInt64, curTagline sql.NullString,
-	newTmdb, newTitle, newOrigin, newOverview string, newAir time.Time,
+	newTmdb, newIMDB, newTVDB, newTitle, newOrigin, newOverview string, newAir time.Time,
 	newRuntime int, newTagline string,
 	force bool,
 ) ([]string, []any) {
@@ -723,6 +1122,14 @@ func buildVideoListUpdates(
 	if shouldSet(curTmdb.Valid && curTmdb.String != "", force) && newTmdb != "" {
 		updates = append(updates, "tmdb_id = ?")
 		args = append(args, newTmdb)
+	}
+	if shouldSet(curIMDB.Valid && curIMDB.String != "", force) && newIMDB != "" {
+		updates = append(updates, "imdb_id = ?")
+		args = append(args, newIMDB)
+	}
+	if shouldSet(curTVDB.Valid && curTVDB.String != "", force) && newTVDB != "" {
+		updates = append(updates, "tvdb_id = ?")
+		args = append(args, newTVDB)
 	}
 	// Title is a special case: we preserve the operator's choice by default,
 	// but do update when it's empty or obviously a placeholder basename.
@@ -852,7 +1259,7 @@ func (s *Scraper) ScrapeAllMissing(ctx context.Context, maxItems int, force bool
 // Missing accepts: "", "any", "poster", "info", "unscraped".
 func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) (*BatchResult, error) {
 	if !s.Enabled() {
-		return nil, errors.New("tmdb scraper disabled")
+		return nil, errors.New("metadata scraper disabled")
 	}
 	start := time.Now()
 	rep := &BatchResult{}
@@ -873,7 +1280,7 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 	case "info":
 		where = append(where, missingInfoSQL())
 	case "unscraped":
-		where = append(where, "(vl.tmdb_id IS NULL OR vl.tmdb_id = '')")
+		where = append(where, missingProviderIDSQL())
 	default:
 		where = append(where, "("+missingInfoSQL()+" OR "+missingPosterSQL()+")")
 	}
@@ -907,7 +1314,11 @@ func (s *Scraper) ScrapeMissing(ctx context.Context, opts ScrapeMissingOptions) 
 }
 
 func missingInfoSQL() string {
-	return "(vl.tmdb_id IS NULL OR vl.tmdb_id = '' OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+	return "(" + missingProviderIDSQL() + " OR vl.description IS NULL OR vl.description = '' OR vl.date_air IS NULL)"
+}
+
+func missingProviderIDSQL() string {
+	return "(COALESCE(vl.tmdb_id, '') = '' AND COALESCE(vl.imdb_id, '') = '' AND COALESCE(vl.tvdb_id, '') = '')"
 }
 
 func missingPosterSQL() string {

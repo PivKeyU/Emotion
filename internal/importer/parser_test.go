@@ -140,6 +140,7 @@ func TestParseFilename_ProviderTags(t *testing.T) {
 	}{
 		{"tmdb equals", "Foo (2014) [tmdb=502419].mkv", "502419", "", ""},
 		{"tmdb dash", "Foo [tmdb-502419].mkv", "502419", "", ""},
+		{"tmdb curly dash", "Foo (2014) {tmdb-502419}.mkv", "502419", "", ""},
 		{"tmdbid alias", "Foo [tmdbid=502419].mkv", "502419", "", ""},
 		{"imdb tag", "Foo (2014) [imdb=tt1234567].mkv", "", "tt1234567", ""},
 		{"tvdb tag", "Show [tvdb=99999].mkv", "", "", "99999"},
@@ -173,7 +174,7 @@ func TestParseSeasonFolder(t *testing.T) {
 		"第一季":          1,
 		"第 2 季":        2,
 		"第10季":         10,
-		"第十二季":        12,
+		"第十二季":         12,
 		"Specials":     0,
 		"Not A Season": -1,
 	}

@@ -392,6 +392,11 @@ func inheritProviderHints(dst *ParsedName, src ParsedName) {
 	}
 }
 
+func nullableProviderID(id string) sql.NullString {
+	id = strings.TrimSpace(id)
+	return sql.NullString{Valid: id != "", String: id}
+}
+
 func seriesHintForMedia(mediaPath string) ParsedName {
 	dir := filepath.Dir(mediaPath)
 	if ParseSeasonFolder(filepath.Base(dir)) >= 0 {
@@ -435,10 +440,12 @@ func (i *Importer) upsertSeries(ctx context.Context, opts Options, bucket *DirFi
 	}
 	origin := nfo.OriginalTitle
 	tmdbID := sql.NullString{Valid: nfo.Tmdb() != "", String: nfo.Tmdb()}
+	imdbID := sql.NullString{Valid: nfo.Imdb() != "", String: nfo.Imdb()}
+	tvdbID := sql.NullString{Valid: nfo.Tvdb() != "", String: nfo.Tvdb()}
 	desc := sql.NullString{Valid: nfo.Description() != "", String: nfo.Description()}
 	air := sql.NullTime{Valid: !nfo.AirDate().IsZero(), Time: nfo.AirDate()}
 
-	id, err := i.upsertVideoList(ctx, opts, db.VideoTypeTV, tmdbID, title, origin, desc, air, nfo.Runtime)
+	id, err := i.upsertVideoList(ctx, opts, db.VideoTypeTV, tmdbID, imdbID, tvdbID, title, origin, desc, air, nfo.Runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -458,14 +465,19 @@ func (i *Importer) upsertSeriesFromGuess(ctx context.Context, opts Options, buck
 	if title == "" {
 		title = c.parsed.Title
 	}
-	parsed := ParsedName{Title: title}
+	parsed := ParseFilename(title)
+	if parsed.Title == "" {
+		parsed.Title = title
+	}
+	inheritProviderHints(&parsed, c.parsed)
 	air := sql.NullTime{}
 	if y := extractYear(title); y > 0 {
 		parsed.Year = y
 		air = sql.NullTime{Valid: true, Time: time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)}
 	}
 	id, err := i.upsertVideoList(ctx, opts, db.VideoTypeTV,
-		sql.NullString{}, parsed.Title, "", sql.NullString{}, air, 0)
+		nullableProviderID(parsed.TMDBID), nullableProviderID(parsed.IMDBID), nullableProviderID(parsed.TVDBID),
+		parsed.Title, "", sql.NullString{}, air, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -477,13 +489,15 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 	origin := ""
 	var desc sql.NullString
 	var tmdbID sql.NullString
+	var imdbID sql.NullString
+	var tvdbID sql.NullString
 	air := sql.NullTime{}
 	runtime := 0
 
-	// TMDB id from the folder/filename tag (e.g. "[tmdb=502419]").
-	if c.parsed.TMDBID != "" {
-		tmdbID = sql.NullString{Valid: true, String: c.parsed.TMDBID}
-	}
+	// Provider ids from folder/filename tags (e.g. "[tmdb=502419]").
+	tmdbID = nullableProviderID(c.parsed.TMDBID)
+	imdbID = nullableProviderID(c.parsed.IMDBID)
+	tvdbID = nullableProviderID(c.parsed.TVDBID)
 
 	if c.nfo != nil {
 		if c.nfo.Title != "" {
@@ -497,6 +511,12 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 		if t := c.nfo.Tmdb(); t != "" {
 			tmdbID = sql.NullString{Valid: true, String: t}
 		}
+		if imdb := c.nfo.Imdb(); imdb != "" {
+			imdbID = sql.NullString{Valid: true, String: imdb}
+		}
+		if tvdb := c.nfo.Tvdb(); tvdb != "" {
+			tvdbID = sql.NullString{Valid: true, String: tvdb}
+		}
 		if a := c.nfo.AirDate(); !a.IsZero() {
 			air = sql.NullTime{Valid: true, Time: a}
 		}
@@ -506,7 +526,7 @@ func (i *Importer) upsertMovie(ctx context.Context, opts Options, bucket *DirFil
 		title = strings.TrimSuffix(filepath.Base(mediaPath), filepath.Ext(mediaPath))
 	}
 
-	listID, err := i.upsertVideoList(ctx, opts, db.VideoTypeMovie, tmdbID, title, origin, desc, air, runtime)
+	listID, err := i.upsertVideoList(ctx, opts, db.VideoTypeMovie, tmdbID, imdbID, tvdbID, title, origin, desc, air, runtime)
 	if err != nil {
 		return nil, err
 	}
@@ -629,7 +649,7 @@ func (i *Importer) upsertEpisode(ctx context.Context, opts Options, bucket *DirF
 // tmdb_id is set, otherwise by (video_library_id, video_type, title).
 func (i *Importer) upsertVideoList(
 	ctx context.Context, opts Options, videoType string,
-	tmdbID sql.NullString, title, originTitle string,
+	tmdbID, imdbID, tvdbID sql.NullString, title, originTitle string,
 	description sql.NullString, dateAir sql.NullTime, runtime int,
 ) (int64, error) {
 	if opts.DryRun {
@@ -645,6 +665,14 @@ func (i *Importer) upsertVideoList(
 		err = i.db.QueryRowContext(ctx,
 			"SELECT id FROM video_list WHERE video_type = ? AND tmdb_id = ? LIMIT 1",
 			videoType, tmdbID.String).Scan(&existingID)
+	} else if imdbID.Valid && imdbID.String != "" {
+		err = i.db.QueryRowContext(ctx,
+			"SELECT id FROM video_list WHERE video_type = ? AND imdb_id = ? LIMIT 1",
+			videoType, imdbID.String).Scan(&existingID)
+	} else if tvdbID.Valid && tvdbID.String != "" {
+		err = i.db.QueryRowContext(ctx,
+			"SELECT id FROM video_list WHERE video_type = ? AND tvdb_id = ? LIMIT 1",
+			videoType, tvdbID.String).Scan(&existingID)
 	} else {
 		err = i.db.QueryRowContext(ctx,
 			"SELECT id FROM video_list WHERE video_library_id = ? AND video_type = ? AND title = ? AND tmdb_id IS NULL LIMIT 1",
@@ -654,10 +682,10 @@ func (i *Importer) upsertVideoList(
 	if errors.Is(err, sql.ErrNoRows) {
 		res, insErr := i.db.ExecContext(ctx, `
 			INSERT INTO video_list
-				(video_library_id, video_type, tmdb_id, title, origin_title,
+				(video_library_id, video_type, tmdb_id, imdb_id, tvdb_id, title, origin_title,
 				 description, date_air, runtime)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, opts.LibraryID, videoType, tmdbID, title, origin, description, dateAir, runtimeVal)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, opts.LibraryID, videoType, tmdbID, imdbID, tvdbID, title, origin, description, dateAir, runtimeVal)
 		if insErr != nil {
 			return 0, fmt.Errorf("video_list insert: %w", insErr)
 		}
@@ -669,9 +697,12 @@ func (i *Importer) upsertVideoList(
 
 	_, err = i.db.ExecContext(ctx, `
 		UPDATE video_list
-		SET title = ?, origin_title = ?, description = ?, date_air = ?, runtime = ?, deleted_at = NULL
+		SET tmdb_id = COALESCE(?, tmdb_id),
+			imdb_id = COALESCE(?, imdb_id),
+			tvdb_id = COALESCE(?, tvdb_id),
+			title = ?, origin_title = ?, description = ?, date_air = ?, runtime = ?, deleted_at = NULL
 		WHERE id = ?
-	`, title, origin, description, dateAir, runtimeVal, existingID)
+	`, tmdbID, imdbID, tvdbID, title, origin, description, dateAir, runtimeVal, existingID)
 	return existingID, err
 }
 

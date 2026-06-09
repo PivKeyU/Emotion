@@ -87,6 +87,9 @@ volumes:
 | `TMDB_API_KEY` | 可选的 TMDB v3 Key 或 v4 Bearer Token。 |
 | `TMDB_LANGUAGE` | TMDB 语言，默认 `zh-CN`。 |
 | `TMDB_AUTO_SCRAPE` | 导入后是否自动刮削更新过的媒体。 |
+| `TVDB_API_KEY` | 可选的 TheTVDB v4 API Key，用于剧集保底刮削。 |
+| `TVDB_PIN` | 可选的 TheTVDB PIN。 |
+| `OMDB_API_KEY` | 可选的 OMDb API Key，用于 IMDb / 电影基础信息保底。 |
 | `EMBY_VERSION` | 返回给 Emby 客户端的版本号。 |
 | `EMBY_ID` | 返回给 Emby 客户端的服务器 ID。 |
 
@@ -125,6 +128,8 @@ GET /admin/library/scan/{job_id}?api_key=...
 ## TMDB 元数据
 
 TMDB 元数据会存储在 PostgreSQL 的 `video_list`、`video_season`、`video_episode`、`video_image` 等表中。海报和背景图会以图片元数据形式保存，并通过兼容 Emby 的图片路由对外提供。
+
+刮削顺序会优先使用本地 NFO / 文件名中的 provider 标记（如 `[tmdb=123]`、`[imdb=tt1234567]`、`[tvdb=12345]`），再通过 TMDB 外部 ID 查找，最后回退到标题搜索。可选配置 `TVDB_API_KEY` 和 `OMDB_API_KEY` 后，剧集会使用 TheTVDB 做保底，电影和 IMDb ID 会使用 OMDb 做基础信息保底。
 
 常用管理 API：
 

@@ -82,6 +82,8 @@ type VideoList struct {
 	VideoLibraryID int64
 	VideoType      string
 	TmdbID         NullString
+	IMDBID         NullString
+	TVDBID         NullString
 	Title          string
 	OriginTitle    NullString
 	Description    NullString
