@@ -155,17 +155,20 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 	res.VideoType = videoType
 	res.Title = title
 
-	applyTitleProviderHints(&tmdbID, &imdbID, &tvdbID, title, originTitle.String)
+	resolveTMDBIDValue := tmdbID
+	resolveIMDBIDValue := imdbID
+	resolveTVDBIDValue := tvdbID
+	applyTitleProviderHints(&resolveTMDBIDValue, &resolveIMDBIDValue, &resolveTVDBIDValue, title, originTitle.String)
 
 	// Step 1: resolve a TMDB id.
-	resolved, err := s.resolveTMDBID(ctx, videoType, tmdbID.String, imdbID.String, tvdbID.String, title, originTitle.String, yearOfTime(dateAir))
+	resolved, err := s.resolveTMDBID(ctx, videoType, resolveTMDBIDValue.String, resolveIMDBIDValue.String, resolveTVDBIDValue.String, title, originTitle.String, yearOfTime(dateAir))
 	if err != nil {
 		res.Skipped = true
 		res.Reason = err.Error()
 		return res, nil
 	}
 	if resolved.ID == 0 {
-		fallback, fallbackID, err := s.resolveFallbackMetadata(ctx, videoType, imdbID.String, tvdbID.String, title, originTitle.String, yearOfTime(dateAir))
+		fallback, fallbackID, err := s.resolveFallbackMetadata(ctx, videoType, resolveIMDBIDValue.String, resolveTVDBIDValue.String, title, originTitle.String, yearOfTime(dateAir))
 		if err != nil && !errors.Is(err, metadata.ErrNotFound) {
 			res.Skipped = true
 			res.Reason = err.Error()
@@ -187,38 +190,134 @@ func (s *Scraper) ScrapeVideoList(ctx context.Context, videoListID int64, forceO
 		}
 	}
 	resolvedID := resolved.ID
-	res.MatchedTMDBID = strconv.FormatInt(resolvedID, 10)
+	setResolvedMatch(res, resolved)
+	if err := s.fetchAndApplyTMDB(ctx, videoListID, resolvedID, videoType, res,
+		tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
+		forceOverride); err != nil {
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+		handled, handleErr := s.handleTMDBNotFound(ctx, videoListID, resolved, videoType, res,
+			tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
+			resolveIMDBIDValue.String, resolveTVDBIDValue.String,
+			forceOverride)
+		if handleErr != nil {
+			return nil, handleErr
+		}
+		if handled {
+			return res, nil
+		}
+		res.Skipped = true
+		res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("tmdb_id %d not found", resolvedID))
+		return res, nil
+	}
+
+	return res, nil
+}
+
+func setResolvedMatch(res *ScrapeResult, resolved tmdbResolution) {
+	if res == nil || resolved.ID <= 0 {
+		return
+	}
+	res.MatchedTMDBID = strconv.FormatInt(resolved.ID, 10)
 	res.MatchedProvider = resolved.Source
 	res.MatchedExternalID = resolved.ExternalID
+}
 
-	// Step 2: fetch details and apply.
+func (s *Scraper) fetchAndApplyTMDB(
+	ctx context.Context, videoListID, resolvedID int64, videoType string, res *ScrapeResult,
+	tmdbID, imdbID, tvdbID sql.NullString, title string,
+	originTitle, description sql.NullString, dateAir sql.NullTime,
+	runtime sql.NullInt64, tagline sql.NullString,
+	forceOverride bool,
+) error {
 	if videoType == db.VideoTypeMovie {
 		movie, err := s.client.GetMovie(ctx, resolvedID)
 		if err != nil {
-			return nil, fmt.Errorf("get movie: %w", err)
+			return fmt.Errorf("get movie: %w", err)
 		}
 		s.fillMovieFallback(ctx, resolvedID, movie)
 		res.MatchedTitle = movie.Title
 		if err := s.applyMovie(ctx, videoListID, movie, res,
 			tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
-			return nil, err
+			return err
 		}
 	} else {
 		show, err := s.client.GetTV(ctx, resolvedID)
 		if err != nil {
-			return nil, fmt.Errorf("get tv: %w", err)
+			return fmt.Errorf("get tv: %w", err)
 		}
 		s.fillTVFallback(ctx, resolvedID, show)
 		res.MatchedTitle = show.Name
 		if err := s.applyTV(ctx, videoListID, show, res,
 			tmdbID, imdbID, tvdbID, title, originTitle, description, dateAir, runtime, tagline,
 			forceOverride); err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
 
-	return res, nil
+func (s *Scraper) handleTMDBNotFound(
+	ctx context.Context, videoListID int64, bad tmdbResolution, videoType string, res *ScrapeResult,
+	curTmdb, curIMDB, curTVDB sql.NullString, title string,
+	curOrigin, curDesc sql.NullString, curAir sql.NullTime,
+	curRuntime sql.NullInt64, curTagline sql.NullString,
+	resolveIMDBID, resolveTVDBID string,
+	forceOverride bool,
+) (bool, error) {
+	res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("tmdb_id %d not found; trying fallback", bad.ID))
+	if curTmdb.Valid && curTmdb.String == strconv.FormatInt(bad.ID, 10) {
+		if _, err := s.db.ExecContext(ctx, "UPDATE video_list SET tmdb_id = NULL WHERE id = ? AND tmdb_id = ?", videoListID, curTmdb.String); err != nil {
+			return false, fmt.Errorf("clear bad tmdb_id: %w", err)
+		}
+		curTmdb = sql.NullString{}
+		res.UpdatedFields++
+		res.Reason = appendScrapeReason(res.Reason, "cleared invalid tmdb_id")
+	}
+
+	if alt, err := s.resolveTMDBIDByTitleExcluding(ctx, videoType, bad.ID, title, curOrigin.String, yearOfTime(curAir)); err != nil {
+		return false, err
+	} else if alt.ID > 0 {
+		setResolvedMatch(res, alt)
+		if err := s.fetchAndApplyTMDB(ctx, videoListID, alt.ID, videoType, res,
+			curTmdb, curIMDB, curTVDB, title, curOrigin, curDesc, curAir, curRuntime, curTagline,
+			forceOverride); err == nil {
+			return true, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			return false, err
+		}
+		res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("alternate tmdb_id %d also not found", alt.ID))
+	}
+
+	fallback, fallbackID, err := s.resolveFallbackMetadata(ctx, videoType,
+		firstNonEmptyString(curIMDB.String, resolveIMDBID),
+		firstNonEmptyString(curTVDB.String, resolveTVDBID),
+		title, curOrigin.String, yearOfTime(curAir))
+	if err != nil && !errors.Is(err, metadata.ErrNotFound) {
+		return false, err
+	}
+	if fallbackID.ID > 0 && fallbackID.ID != bad.ID {
+		setResolvedMatch(res, fallbackID)
+		if err := s.fetchAndApplyTMDB(ctx, videoListID, fallbackID.ID, videoType, res,
+			curTmdb, curIMDB, curTVDB, title, curOrigin, curDesc, curAir, curRuntime, curTagline,
+			forceOverride); err == nil {
+			return true, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			return false, err
+		}
+		res.Reason = appendScrapeReason(res.Reason, fmt.Sprintf("fallback tmdb_id %d also not found", fallbackID.ID))
+	}
+	if fallback != nil {
+		if err := s.applyExternalMetadata(ctx, videoListID, videoType, fallback, res,
+			curTmdb, curIMDB, curTVDB, title, curOrigin, curDesc, curAir, curRuntime, curTagline,
+			forceOverride); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 type tmdbResolution struct {
@@ -314,6 +413,22 @@ func bestExternalTMDBResult(videoType string, movies, tvs []SearchResult, title 
 	return bestTMDBSearchResult(results, title, year).ID
 }
 
+func (s *Scraper) resolveTMDBIDByTitleExcluding(ctx context.Context, videoType string, excludedID int64, title, originTitle string, year int) (tmdbResolution, error) {
+	if s.client == nil || !s.client.Enabled() {
+		return tmdbResolution{}, nil
+	}
+	for _, candidate := range tmdbTitleCandidates(title, originTitle) {
+		id, err := s.searchTMDBCandidateExcluding(ctx, videoType, candidate, year, excludedID)
+		if err != nil {
+			return tmdbResolution{}, err
+		}
+		if id > 0 {
+			return tmdbResolution{ID: id, Source: "tmdb_search_retry"}, nil
+		}
+	}
+	return tmdbResolution{}, nil
+}
+
 func (s *Scraper) searchTMDBCandidate(ctx context.Context, videoType, title string, year int) (int64, error) {
 	years := []int{year}
 	if year > 0 {
@@ -326,6 +441,23 @@ func (s *Scraper) searchTMDBCandidate(ctx context.Context, videoType, title stri
 		}
 		if len(results) > 0 {
 			return bestTMDBSearchResult(results, title, year).ID, nil
+		}
+	}
+	return 0, nil
+}
+
+func (s *Scraper) searchTMDBCandidateExcluding(ctx context.Context, videoType, title string, year int, excludedID int64) (int64, error) {
+	years := []int{year}
+	if year > 0 {
+		years = append(years, 0)
+	}
+	for _, searchYear := range years {
+		results, err := s.searchTMDB(ctx, videoType, title, searchYear)
+		if err != nil {
+			return 0, err
+		}
+		if best, ok := bestTMDBSearchResultExcluding(results, title, year, excludedID); ok {
+			return best.ID, nil
 		}
 	}
 	return 0, nil
@@ -647,6 +779,20 @@ func bestTMDBSearchResult(results []SearchResult, query string, year int) Search
 		}
 	}
 	return best
+}
+
+func bestTMDBSearchResultExcluding(results []SearchResult, query string, year int, excludedID int64) (SearchResult, bool) {
+	filtered := make([]SearchResult, 0, len(results))
+	for _, result := range results {
+		if result.ID == excludedID {
+			continue
+		}
+		filtered = append(filtered, result)
+	}
+	if len(filtered) == 0 {
+		return SearchResult{}, false
+	}
+	return bestTMDBSearchResult(filtered, query, year), true
 }
 
 func tmdbSearchScore(result SearchResult, query string, year int) int {

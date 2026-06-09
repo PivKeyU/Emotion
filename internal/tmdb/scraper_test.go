@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -99,6 +100,53 @@ func TestResolveTMDBID_UsesTVDBBeforeTitleSearch(t *testing.T) {
 	}
 	if got.ID != 99 || got.Source != "tvdb" {
 		t.Fatalf("resolution = %+v", got)
+	}
+}
+
+func TestResolveTMDBIDByTitleExcluding_SkipsBadTMDBID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/search/tv" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("query"); got != "使徒行者2" {
+			t.Fatalf("query = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"id": 197977, "name": "使徒行者2", "first_air_date": "2017-09-18", "vote_average": 9.9},
+				{"id": 12345, "name": "使徒行者2", "first_air_date": "2017-09-18", "vote_average": 7.5},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewClient("test-key", WithBaseURL(srv.URL), WithRateLimit(0))
+	scraper := NewScraper(client, nil, nil)
+	got, err := scraper.resolveTMDBIDByTitleExcluding(context.Background(), db.VideoTypeTV, 197977, "使徒行者2", "", 2017)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != 12345 || got.Source != "tmdb_search_retry" {
+		t.Fatalf("resolution = %+v", got)
+	}
+}
+
+func TestFetchAndApplyTMDB_NotFoundIsRecoverable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tv/197977" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewClient("test-key", WithBaseURL(srv.URL), WithRateLimit(0))
+	scraper := NewScraper(client, nil, nil)
+	err := scraper.fetchAndApplyTMDB(context.Background(), 1, 197977, db.VideoTypeTV, &ScrapeResult{},
+		sql.NullString{}, sql.NullString{}, sql.NullString{}, "使徒行者2",
+		sql.NullString{}, sql.NullString{}, sql.NullTime{}, sql.NullInt64{}, sql.NullString{}, false)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected recoverable ErrNotFound, got %v", err)
 	}
 }
 
