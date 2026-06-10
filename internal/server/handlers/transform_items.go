@@ -14,6 +14,7 @@ import (
 
 // videoMediaRow holds the columns we read for building MediaSources.
 type videoMediaRow struct {
+	ID            int64
 	UUID          string
 	Name          string
 	FileSize      int64
@@ -22,19 +23,21 @@ type videoMediaRow struct {
 	FileContainer string
 	FileChapters  string
 	PathType      string
+	PathURL       string
 }
 
 // loadVideoMedias fetches video_media rows for a list or a specific episode.
 func (t *Transform) loadVideoMedias(ctx context.Context, videoListID, videoEpisodeID int64) ([]videoMediaRow, error) {
-	query := `SELECT uuid, name, COALESCE(file_size,0), COALESCE(file_second,0),
+	query := `SELECT id, uuid, name, COALESCE(file_size,0), COALESCE(file_second,0),
 			COALESCE(file_matadata::text,''), COALESCE(file_container,''),
-			COALESCE(file_chapters::text,''), COALESCE(path_type,'')
+			COALESCE(file_chapters::text,''), COALESCE(path_type,''), COALESCE(path_url,'')
 		FROM video_media WHERE deleted_at IS NULL AND video_list_id = ?`
 	args := []any{videoListID}
 	if videoEpisodeID > 0 {
 		query += " AND video_episode_id = ?"
 		args = append(args, videoEpisodeID)
 	}
+	query += " ORDER BY CASE path_type WHEN 'url' THEN 0 WHEN 'local' THEN 1 ELSE 2 END, id ASC"
 	rows, err := t.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -44,8 +47,8 @@ func (t *Transform) loadVideoMedias(ctx context.Context, videoListID, videoEpiso
 	var out []videoMediaRow
 	for rows.Next() {
 		var r videoMediaRow
-		if err := rows.Scan(&r.UUID, &r.Name, &r.FileSize, &r.FileSecond,
-			&r.FileMetadata, &r.FileContainer, &r.FileChapters, &r.PathType); err != nil {
+		if err := rows.Scan(&r.ID, &r.UUID, &r.Name, &r.FileSize, &r.FileSecond,
+			&r.FileMetadata, &r.FileContainer, &r.FileChapters, &r.PathType, &r.PathURL); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -78,6 +81,38 @@ func (t *Transform) loadSubtitles(ctx context.Context, videoMediaUUID string) ([
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (t *Transform) loadSubtitlesForMediaIDs(ctx context.Context, mediaIDs []int64) (map[int64][]videoSubtitleRow, error) {
+	out := map[int64][]videoSubtitleRow{}
+	if len(mediaIDs) == 0 {
+		return out, nil
+	}
+	placeholders := make([]string, len(mediaIDs))
+	args := make([]any, len(mediaIDs))
+	for idx, id := range mediaIDs {
+		placeholders[idx] = "?"
+		args[idx] = id
+	}
+	rows, err := t.db.QueryContext(ctx, `
+		SELECT video_media_id, id, title, codec
+		FROM video_subtitle
+		WHERE deleted_at IS NULL AND video_media_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY video_media_id, id
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var mediaID int64
+		var sub videoSubtitleRow
+		if err := rows.Scan(&mediaID, &sub.ID, &sub.Title, &sub.Codec); err != nil {
+			return nil, err
+		}
+		out[mediaID] = append(out[mediaID], sub)
 	}
 	return out, rows.Err()
 }
@@ -118,11 +153,20 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 		return nil, err
 	}
 
+	mediaIDs := make([]int64, 0, len(medias))
+	for _, m := range medias {
+		mediaIDs = append(mediaIDs, m.ID)
+	}
+	subtitlesByMedia, err := t.loadSubtitlesForMediaIDs(ctx, mediaIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	rows := make([]any, 0, len(medias))
 	for _, m := range medias {
 		streams, bitRate := formatStreams(m.FileMetadata)
 
-		subs, _ := t.loadSubtitles(ctx, m.UUID)
+		subs := subtitlesByMedia[m.ID]
 		defaultSubID := int64(0)
 		for _, s := range subs {
 			defaultSubID = s.ID
@@ -149,10 +193,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 			})
 		}
 
-		var directStreamURL any
-		if playSessionID != "" {
-			directStreamURL = fmt.Sprintf("/Videos/%s/original.strm?line=&api_key=%s", m.UUID, apiKey)
-		}
+		directStreamURL, addAPIKey := directStreamURLForMedia(m, playSessionID, apiKey)
 
 		item := map[string]any{
 			"Chapters":                   []any{},
@@ -166,7 +207,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 			"IsRemote":                   true,
 			"RunTimeTicks":               m.FileSecond * emby.TicksPerSecond,
 			"HasMixedProtocols":          false,
-			"SupportsTranscoding":        true,
+			"SupportsTranscoding":        false,
 			"SupportsDirectStream":       true,
 			"SupportsDirectPlay":         true,
 			"IsInfiniteStream":           false,
@@ -179,7 +220,7 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 			"Bitrate":                    bitRate,
 			"RequiredHttpHeaders":        map[string]any{},
 			"DirectStreamUrl":            directStreamURL,
-			"AddApiKeyToDirectStreamUrl": true,
+			"AddApiKeyToDirectStreamUrl": addAPIKey,
 			"ReadAtNativeFramerate":      false,
 			"ItemId":                     m.UUID,
 		}
@@ -198,6 +239,29 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 		})
 	}
 	return rows, nil
+}
+
+func directStreamURLForMedia(m videoMediaRow, playSessionID, apiKey string) (any, bool) {
+	if playSessionID == "" {
+		return nil, false
+	}
+	return fmt.Sprintf("/Videos/%s/original.%s?line=&api_key=%s", m.UUID, directStreamExtension(m.FileContainer), apiKey), true
+}
+
+func directStreamExtension(container string) string {
+	ext := strings.ToLower(strings.TrimSpace(mediaContainer(container)))
+	switch ext {
+	case "", "unknown":
+		return "mkv"
+	case "matroska":
+		return "mkv"
+	case "quicktime":
+		return "mov"
+	case "mpegts":
+		return "ts"
+	default:
+		return ext
+	}
 }
 
 func mediaContainer(container string) string {

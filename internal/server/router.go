@@ -141,9 +141,11 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 	r.Get(prefix+"/Videos/{mediaUUID}/AdditionalParts", items.Similar)
 	r.Get(prefix+"/Videos/{mediaUUID}/Subtitles/{subtitleId}", videos.Subtitle)
 	r.Get(prefix+"/Videos/{mediaUUID}/{mediaName}", videos.Play)
+	r.Head(prefix+"/Videos/{mediaUUID}/{mediaName}", videos.Play)
 	r.Get(prefix+"/videos/{mediaUUID}/AdditionalParts", items.Similar)
 	r.Get(prefix+"/videos/{mediaUUID}/subtitles/{subtitleId}", videos.Subtitle)
 	r.Get(prefix+"/videos/{mediaUUID}/{mediaName}", videos.Play)
+	r.Head(prefix+"/videos/{mediaUUID}/{mediaName}", videos.Play)
 
 	// Sessions
 	r.Get(prefix+"/Sessions", sess.List)

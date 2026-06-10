@@ -399,13 +399,19 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 	if err != nil {
 		return nil, err
 	}
+	images, err := t.loadImagePresence(ctx, map[string][]int64{
+		emby.ItemIDTypeVideoLibrary: libraryIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
 
 	var out []any
 	for _, row := range libraries {
 		root := libraryRootOrFallback(row.name, row.root)
 		libID := emby.ItemID(emby.ItemIDTypeVideoLibrary, row.id)
 		count := counts[row.id]
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"Name":                  row.name,
 			"ServerId":              t.cfg.EmbyID,
 			"Id":                    libID,
@@ -436,13 +442,12 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 			"RecursiveItemCount":      count.recursiveItemCount,
 			"DisplayPreferencesId":    libID,
 			"PrimaryImageAspectRatio": 1,
-			"ImageTags": map[string]any{
-				"Primary": libID,
-			},
-			"BackdropImageTags": []any{},
-			"LockedFields":      []any{},
-			"LockData":          false,
-		})
+			"BackdropImageTags":       []any{},
+			"LockedFields":            []any{},
+			"LockData":                false,
+		}
+		t.applyImageFieldsWithPresence(ctx, item, emby.ItemIDTypeVideoLibrary, row.id, libID, "", 0, images)
+		out = append(out, item)
 	}
 	return out, nil
 }

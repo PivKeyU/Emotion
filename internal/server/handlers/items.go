@@ -388,18 +388,6 @@ func (i *Items) PlaybackInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Upsert progress row so Sessions/Playing updates have a target.
-	hasRow, err := hasProgress(ctx, i.db, userID, videoListID, videoEpisodeID)
-	if err != nil {
-		i.log.Error("progress lookup", "err", err)
-	}
-	if !hasRow {
-		_, _ = i.db.ExecContext(ctx, `
-			INSERT INTO user_video_record (video_list_id, video_season_id, video_episode_id, user_id)
-			VALUES (?, ?, ?, ?)
-		`, videoListID, videoSeasonID, videoEpisodeID, userID)
-	}
-
 	playSessionID := itemIDStr
 	mediaSources, err := i.transform.VideoMediaSources(ctx, videoListID, videoEpisodeID.Int64, false, playSessionID, ctxpkg.Token(ctx))
 	if err != nil {
@@ -412,6 +400,34 @@ func (i *Items) PlaybackInfo(w http.ResponseWriter, r *http.Request) {
 		"MediaSources":  mediaSources,
 		"PlaySessionId": playSessionID,
 	})
+
+	// Keep PlaybackInfo on the fast path. Sessions/Playing can insert progress
+	// rows too, so this best-effort pre-create runs after the response is sent.
+	progressCtx, cancelProgress := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	go func() {
+		defer cancelProgress()
+		i.ensureProgressRow(progressCtx, userID, videoListID, videoSeasonID, videoEpisodeID)
+	}()
+}
+
+func (i *Items) ensureProgressRow(ctx context.Context, userID, videoListID int64, videoSeasonID, videoEpisodeID db.NullInt64) {
+	if userID <= 0 || videoListID <= 0 {
+		return
+	}
+	hasRow, err := hasProgress(ctx, i.db, userID, videoListID, videoEpisodeID)
+	if err != nil {
+		i.log.Error("progress lookup", "err", err)
+		return
+	}
+	if hasRow {
+		return
+	}
+	if _, err := i.db.ExecContext(ctx, `
+		INSERT INTO user_video_record (video_list_id, video_season_id, video_episode_id, user_id)
+		VALUES (?, ?, ?, ?)
+	`, videoListID, videoSeasonID, videoEpisodeID, userID); err != nil {
+		i.log.Warn("progress pre-create failed", "err", err)
+	}
 }
 
 // hasProgress reports whether a user_video_record row already exists.

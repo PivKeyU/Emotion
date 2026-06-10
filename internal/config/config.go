@@ -13,9 +13,8 @@ import (
 
 // Config holds all application configuration.
 type Config struct {
-	AppName       string
-	AppAuthNumber int
-	AppLogLevel   string
+	AppName     string
+	AppLogLevel string
 
 	ServerHost string
 	ServerPort int
@@ -69,9 +68,8 @@ func Load() *Config {
 	}
 
 	return &Config{
-		AppName:       getEnv("APP_NAME", "emotion"),
-		AppAuthNumber: getEnvInt("APP_AUTH_NUMBER", 10),
-		AppLogLevel:   getEnv("APP_LOG_LEVEL", "info"),
+		AppName:     getEnv("APP_NAME", "emotion"),
+		AppLogLevel: getEnv("APP_LOG_LEVEL", "info"),
 
 		ServerHost: getEnv("SERVER_HOST", "0.0.0.0"),
 		ServerPort: getEnvInt("SERVER_PORT", 8096),

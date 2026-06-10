@@ -178,12 +178,6 @@ func (u *Users) AuthenticateByName(w http.ResponseWriter, r *http.Request) {
 		userID = id
 	}
 
-	// Enforce authorized user count (emya APP_AUTH_NUMBER).
-	if u.cfg.AppAuthNumber > 0 && userID > int64(u.cfg.AppAuthNumber) {
-		WriteText(w, http.StatusUnauthorized, "登陆失败 已超授权数")
-		return
-	}
-
 	// Generate token.
 	token := auth.RandomToken(16)
 	if _, err := u.db.ExecContext(ctx, `

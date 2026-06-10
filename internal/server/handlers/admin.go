@@ -536,6 +536,17 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			JOIN video_media vm
 				ON vm.video_list_id = vl.id AND vm.deleted_at IS NULL
 			GROUP BY vl.video_library_id
+		),
+		library_images AS (
+			SELECT
+				relation_id,
+				COALESCE(MAX(CASE WHEN type = 'Primary' THEN path_type END), '') AS poster_type,
+				COALESCE(MAX(CASE WHEN type = 'Primary' THEN path_url END), '') AS poster_url,
+				COALESCE(MAX(CASE WHEN type = 'Backdrop' THEN path_type END), '') AS backdrop_type,
+				COALESCE(MAX(CASE WHEN type = 'Backdrop' THEN path_url END), '') AS backdrop_url
+			FROM video_image
+			WHERE relation_type = ? AND type IN (?, ?) AND deleted_at IS NULL
+			GROUP BY relation_id
 		)
 		SELECT
 			l.id,
@@ -549,7 +560,11 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			COALESCE(lc.movie_count, 0) AS movie_count,
 			COALESCE(lc.series_count, 0) AS series_count,
 			COALESCE(ec.episode_count, 0) AS episode_count,
-			COALESCE(mc.media_count, 0) AS media_count
+			COALESCE(mc.media_count, 0) AS media_count,
+			COALESCE(li.poster_type, '') AS poster_type,
+			COALESCE(li.poster_url, '') AS poster_url,
+			COALESCE(li.backdrop_type, '') AS backdrop_type,
+			COALESCE(li.backdrop_url, '') AS backdrop_url
 		FROM library l
 		LEFT JOIN list_counts lc
 			ON lc.video_library_id = l.id
@@ -557,8 +572,10 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			ON ec.video_library_id = l.id
 		LEFT JOIN media_counts mc
 			ON mc.video_library_id = l.id
+		LEFT JOIN library_images li
+			ON li.relation_id = l.id
 		WHERE l.deleted_at IS NULL
-		ORDER BY l.id ASC`)
+		ORDER BY l.id ASC`, emby.ItemIDTypeVideoLibrary, db.ImageTypePrimary, db.ImageTypeBackdrop)
 	if err != nil {
 		a.log.Error("library list failed", "category", "admin", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -580,15 +597,22 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			seriesCount          int64
 			episodeCount         int64
 			mediaCount           int64
+			posterType           string
+			posterPath           string
+			backdropType         string
+			backdropPath         string
 		)
 		if err := rows.Scan(
 			&id, &name, &role, &rootPath, &watchEnabled, &watchIntervalSeconds, &createdAt,
 			&itemCount, &movieCount, &seriesCount, &episodeCount, &mediaCount,
+			&posterType, &posterPath, &backdropType, &backdropPath,
 		); err != nil {
 			continue
 		}
+		itemID := emby.ItemID(emby.ItemIDTypeVideoLibrary, id)
 		m := map[string]any{
 			"id":                     id,
+			"item_id":                itemID,
 			"name":                   name,
 			"role":                   role,
 			"root_path":              rootPath,
@@ -599,6 +623,8 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			"series_count":           seriesCount,
 			"episode_count":          episodeCount,
 			"media_count":            mediaCount,
+			"poster_url":             adminImageURL(posterType, posterPath, itemID, db.ImageTypePrimary),
+			"backdrop_url":           adminImageURL(backdropType, backdropPath, itemID, db.ImageTypeBackdrop),
 		}
 		if watcher := a.watchByLibrary(id); watcher != nil {
 			m["watcher"] = a.publicWatchJob(watcher)
@@ -613,11 +639,13 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 
 // libraryCreateBody is the POST /admin/libraries body.
 type libraryCreateBody struct {
-	Name                 string `json:"name"`
-	Role                 string `json:"role"`
-	RootPath             string `json:"root_path"`
-	WatchEnabled         bool   `json:"watch_enabled"`
-	WatchIntervalSeconds int    `json:"watch_interval_seconds"`
+	Name                 string  `json:"name"`
+	Role                 string  `json:"role"`
+	RootPath             string  `json:"root_path"`
+	WatchEnabled         bool    `json:"watch_enabled"`
+	WatchIntervalSeconds int     `json:"watch_interval_seconds"`
+	PosterURL            *string `json:"poster_url"`
+	BackdropURL          *string `json:"backdrop_url"`
 }
 
 // LibraryCreate creates a new library.
@@ -649,6 +677,20 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	if body.PosterURL != nil {
+		if err := a.replaceLibraryImage(r.Context(), id, db.ImageTypePrimary, strings.TrimSpace(*body.PosterURL)); err != nil {
+			a.log.Error("library poster update failed", "category", "admin", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.BackdropURL != nil {
+		if err := a.replaceLibraryImage(r.Context(), id, db.ImageTypeBackdrop, strings.TrimSpace(*body.BackdropURL)); err != nil {
+			a.log.Error("library backdrop update failed", "category", "admin", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+	}
 	if body.WatchEnabled && root.Valid {
 		a.startLibraryWatcher(context.Background(), id, root.String, body.Role, interval)
 	}
@@ -659,6 +701,8 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 		"root_path":              body.RootPath,
 		"watch_enabled":          body.WatchEnabled,
 		"watch_interval_seconds": interval,
+		"poster_url":             valueOrEmpty(body.PosterURL),
+		"backdrop_url":           valueOrEmpty(body.BackdropURL),
 	})
 }
 
@@ -707,6 +751,20 @@ func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
+	if body.PosterURL != nil {
+		if err := a.replaceLibraryImage(r.Context(), id, db.ImageTypePrimary, strings.TrimSpace(*body.PosterURL)); err != nil {
+			a.log.Error("library poster update failed", "category", "admin", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+	}
+	if body.BackdropURL != nil {
+		if err := a.replaceLibraryImage(r.Context(), id, db.ImageTypeBackdrop, strings.TrimSpace(*body.BackdropURL)); err != nil {
+			a.log.Error("library backdrop update failed", "category", "admin", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+	}
 	if body.WatchEnabled {
 		a.startLibraryWatcher(context.Background(), id, body.RootPath, body.Role, interval)
 	} else {
@@ -719,6 +777,8 @@ func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
 		"root_path":              body.RootPath,
 		"watch_enabled":          body.WatchEnabled,
 		"watch_interval_seconds": interval,
+		"poster_url":             valueOrEmpty(body.PosterURL),
+		"backdrop_url":           valueOrEmpty(body.BackdropURL),
 	})
 }
 
@@ -1555,11 +1615,19 @@ func scanAdminMediaItem(rows interface {
 }
 
 func (a *Admin) replaceAdminImage(ctx context.Context, listID int64, imageType, rawURL string) error {
+	return a.replaceImage(ctx, emby.ItemIDTypeVideoList, listID, imageType, rawURL)
+}
+
+func (a *Admin) replaceLibraryImage(ctx context.Context, libraryID int64, imageType, rawURL string) error {
+	return a.replaceImage(ctx, emby.ItemIDTypeVideoLibrary, libraryID, imageType, rawURL)
+}
+
+func (a *Admin) replaceImage(ctx context.Context, relationType string, relationID int64, imageType, rawURL string) error {
 	if rawURL == "" {
 		_, err := a.db.ExecContext(ctx, `
 			UPDATE video_image SET deleted_at = NOW(), updated_at = NOW()
 			WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
-		`, emby.ItemIDTypeVideoList, listID, imageType)
+		`, relationType, relationID, imageType)
 		return err
 	}
 	pathType, pathURL := adminImagePath(rawURL)
@@ -1568,7 +1636,7 @@ func (a *Admin) replaceAdminImage(ctx context.Context, listID int64, imageType, 
 		SELECT id FROM video_image
 		WHERE relation_type = ? AND relation_id = ? AND type = ? AND deleted_at IS NULL
 		LIMIT 1
-	`, emby.ItemIDTypeVideoList, listID, imageType).Scan(&existing)
+	`, relationType, relationID, imageType).Scan(&existing)
 	if existing > 0 {
 		_, err := a.db.ExecContext(ctx, `
 			UPDATE video_image SET path_type = ?, path_url = ?, updated_at = NOW()
@@ -1579,7 +1647,7 @@ func (a *Admin) replaceAdminImage(ctx context.Context, listID int64, imageType, 
 	_, err := a.db.ExecContext(ctx, `
 		INSERT INTO video_image (type, relation_type, relation_id, path_type, path_url)
 		VALUES (?, ?, ?, ?, ?)
-	`, imageType, emby.ItemIDTypeVideoList, listID, pathType, pathURL)
+	`, imageType, relationType, relationID, pathType, pathURL)
 	return err
 }
 
@@ -1648,6 +1716,13 @@ func parsePositiveInt64(raw string, def int64) int64 {
 func nullableString(s string) sql.NullString {
 	s = strings.TrimSpace(s)
 	return sql.NullString{String: s, Valid: s != ""}
+}
+
+func valueOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
 }
 
 func normalizeWatchInterval(v int) int {

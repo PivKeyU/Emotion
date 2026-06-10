@@ -115,10 +115,14 @@ textarea { min-height: 110px; resize: vertical; }
 .library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
 .lib { border: 1px solid var(--line); border-top: 3px double var(--line); background: var(--panel); border-radius: 0; padding: 16px; box-shadow: var(--shadow); transition: border-color 0.15s, box-shadow 0.15s; }
 .lib:hover { border-color: var(--accent); box-shadow: var(--shadow-lg); }
+.lib-main { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 12px; align-items: start; }
+.lib-cover { aspect-ratio: 1; border: 1px solid var(--line); background: var(--panel2); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; color: var(--muted); font-size: 12px; font-weight: 900; text-align: center; padding: 8px; }
+.lib-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .lib-head { display: flex; gap: 12px; align-items: flex-start; }
 .lib-title { font-size: 20px; font-weight: 900; margin-bottom: 6px; color: var(--text); line-height: 1.15; }
 .lib-path { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; color: var(--muted); background: var(--panel2); padding: 4px 8px; border-radius: 0; display: inline-block; max-width: 100%; border-left: 3px solid var(--accent); }
 .lib-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 12px 0; }
+.lib-image-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: 8px 0; }
 .lib-path-edit { min-width: 0; font-family: var(--mono); font-size: 12px; }
 
 .toolbar { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; align-items: end; background: var(--panel3); padding: 14px; border-radius: 0; border: 1px solid var(--line-soft); border-top: 3px double var(--line); }
@@ -187,7 +191,8 @@ tbody tr:hover { background: var(--panel3); }
 }
 @media(max-width: 560px) {
   .media-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-  .lib-path-row { grid-template-columns: 1fr; }
+  .lib-main, .lib-path-row, .lib-image-row { grid-template-columns: 1fr; }
+  .lib-cover { width: 86px; }
   .file-row { grid-template-columns: 1fr; }
 }
 </style>
@@ -253,6 +258,10 @@ tbody tr:hover { background: var(--panel3); }
           <div class="col grow"><label>路径</label><input id="lib-root" placeholder="/data/movies"></div>
           <div class="col"><label>类型</label><select id="lib-role"><option value="movie">电影</option><option value="tv">剧集</option><option value="">自动</option></select></div>
           <button class="btn" id="btn-lib-create" style="height: 45px;">创建媒体库</button>
+        </div>
+        <div class="row" style="align-items: flex-end; margin-top: 12px;">
+          <div class="col grow"><label>封面 URL / TMDB 路径</label><input id="lib-poster" placeholder="https://... 或 /poster.jpg"></div>
+          <div class="col grow"><label>背景图 URL / TMDB 路径</label><input id="lib-backdrop" placeholder="https://... 或 /backdrop.jpg"></div>
         </div>
       </div>
       <div id="library-grid" class="library-grid"></div>
@@ -436,12 +445,20 @@ async function login(){S.url=$("#login-url").value.trim();const key=$("#login-ke
 async function boot(){status("连接中","ok");try{const info=await api("GET","/System/Info");$("#server-info").innerHTML=Object.entries({名称:info.ServerName,版本:info.Version,ID:info.Id,地址:info.LocalAddress}).map(([k,v])=>`<div><span class=muted>${k}</span>: ${esc(v)}</div>`).join("");status(info.ServerName||"已连接","ok");await Promise.allSettled([loadCounts(),loadLibraries(),loadKeys()]);}catch(e){status("连接失败","bad");$("#server-info").textContent=e.message}}
 async function loadCounts(){const c=await api("GET","/Items/Counts");$("#counts").innerHTML=[["电影",c.MovieCount],["剧集",c.SeriesCount],["集数",c.EpisodeCount],["媒体库",S.libs.length]].map(x=>`<div class=stat><div class=k>${x[0]}</div><div class=v>${Number(x[1]||0)}</div></div>`).join("")}
 async function loadLibraries(){try{S.libs=await api("GET","/admin/libraries");renderLibraries();populateLibSelect();await loadCounts()}catch(e){$("#library-grid").innerHTML=`<div class=muted>${esc(e.message)}</div>`}}
-function renderLibraries(){const g=$("#library-grid");if(!S.libs.length){g.innerHTML="<div class=muted>暂无媒体库</div>";return}g.innerHTML=S.libs.map(l=>`<div class=lib data-id="${l.id}"><div class=lib-head><div class=grow><div class=lib-title>${esc(l.name)}</div><div class="muted lib-path">${esc(l.root_path||"未设置路径")}</div></div><span class=pill>${esc(l.role||"auto")}</span></div><div class=lib-path-row><input class=lib-path-edit data-path-input value="${esc(l.root_path||"")}" placeholder="/data"><button class="btn sm secondary" data-act=save-path>保存路径</button></div><div class=stats style="margin:12px 0"><div class=stat><div class=k>电影</div><div class=v>${l.movie_count||0}</div></div><div class=stat><div class=k>剧集</div><div class=v>${l.series_count||0}</div></div><div class=stat><div class=k>集数</div><div class=v>${l.episode_count||0}</div></div></div><div class=row><button class="btn sm" data-act=open>打开</button><button class="btn sm secondary" data-act=scan>扫描</button><label class=switch><input type=checkbox data-act=watch ${l.watch_enabled?"checked":""}><span>监控</span></label><button class="btn sm bad" data-act=del>删除</button></div></div>`).join("")}
+function renderLibraries(){
+const g=$("#library-grid");
+if(!S.libs.length){g.innerHTML="<div class=muted>暂无媒体库</div>";return}
+g.innerHTML=S.libs.map(l=>{
+const cover=l.poster_url?`<img loading="lazy" decoding="async" src="${esc(asset(l.poster_url))}" onerror="this.remove()">`:"";
+const backdrop=l.backdrop_url?`<span class="pill ok">背景图</span>`:"";
+return `<div class=lib data-id="${l.id}"><div class=lib-main><div class=lib-cover>${cover}<span>${esc(l.name)}</span></div><div><div class=lib-head><div class=grow><div class=lib-title>${esc(l.name)}</div><div class="muted lib-path">${esc(l.root_path||"未设置路径")}</div></div><span class=pill>${esc(l.role||"auto")}</span>${backdrop}</div><div class=lib-path-row><input class=lib-path-edit data-path-input value="${esc(l.root_path||"")}" placeholder="/data"><button class="btn sm secondary" data-act=save-path>保存路径</button></div><div class=lib-image-row><input class=lib-path-edit data-poster-input value="${esc(l.poster_url||"")}" placeholder="封面 URL / TMDB 路径"><button class="btn sm secondary" data-act=save-image>保存图片</button></div><div class=lib-image-row><input class=lib-path-edit data-backdrop-input value="${esc(l.backdrop_url||"")}" placeholder="背景图 URL / TMDB 路径"><button class="btn sm secondary" data-act=clear-image>清空图片</button></div></div></div><div class=stats style="margin:12px 0"><div class=stat><div class=k>电影</div><div class=v>${l.movie_count||0}</div></div><div class=stat><div class=k>剧集</div><div class=v>${l.series_count||0}</div></div><div class=stat><div class=k>集数</div><div class=v>${l.episode_count||0}</div></div></div><div class=row><button class="btn sm" data-act=open>打开</button><button class="btn sm secondary" data-act=scan>扫描</button><label class=switch><input type=checkbox data-act=watch ${l.watch_enabled?"checked":""}><span>监控</span></label><button class="btn sm bad" data-act=del>删除</button></div></div>`
+}).join("")
+}
 function populateLibSelect(){const html=S.libs.map(l=>`<option value="${l.id}">${esc(l.name)} (#${l.id})</option>`).join("");$("#scan-lib").innerHTML=html||"<option value=\"\">未选择</option>";if(S.selectedLib&&S.libs.some(l=>l.id===S.selectedLib.id))$("#scan-lib").value=S.selectedLib.id}
 function scanLibrary(){const id=$("#scan-lib").value;return S.libs.find(l=>String(l.id)===String(id))}
 function syncScannerFromLibrary(){const l=scanLibrary();if(!l)return;$("#scan-root").value=l.root_path||"/data";if(l.role)$("#scan-type").value=l.role}
-async function createLibrary(){const b={name:$("#lib-name").value.trim(),role:$("#lib-role").value,root_path:$("#lib-root").value.trim(),watch_interval_seconds:30};if(!b.name)return;await api("POST","/admin/libraries",b);$("#lib-name").value="";$("#lib-root").value="";await loadLibraries()}
-async function patchLibrary(l,patch){const body={name:patch.name??l.name,role:patch.role??l.role,root_path:patch.root_path??l.root_path,watch_enabled:patch.watch_enabled===undefined?!!l.watch_enabled:!!patch.watch_enabled,watch_interval_seconds:patch.watch_interval_seconds??(l.watch_interval_seconds||30)};await api("PATCH","/admin/libraries/"+l.id,body);await loadLibraries()}
+async function createLibrary(){const b={name:$("#lib-name").value.trim(),role:$("#lib-role").value,root_path:$("#lib-root").value.trim(),watch_interval_seconds:30,poster_url:$("#lib-poster").value.trim(),backdrop_url:$("#lib-backdrop").value.trim()};if(!b.name)return;await api("POST","/admin/libraries",b);$("#lib-name").value="";$("#lib-root").value="";$("#lib-poster").value="";$("#lib-backdrop").value="";await loadLibraries()}
+async function patchLibrary(l,patch){const body={name:patch.name??l.name,role:patch.role??l.role,root_path:patch.root_path??l.root_path,watch_enabled:patch.watch_enabled===undefined?!!l.watch_enabled:!!patch.watch_enabled,watch_interval_seconds:patch.watch_interval_seconds??(l.watch_interval_seconds||30)};if(Object.prototype.hasOwnProperty.call(patch,"poster_url"))body.poster_url=patch.poster_url||"";if(Object.prototype.hasOwnProperty.call(patch,"backdrop_url"))body.backdrop_url=patch.backdrop_url||"";await api("PATCH","/admin/libraries/"+l.id,body);await loadLibraries()}
 async function openLib(id){S.selectedLib=S.libs.find(l=>String(l.id)===String(id));S.mediaOffset=0;$("#active-lib").textContent=S.selectedLib?S.selectedLib.name:"未选择媒体库";$("#library-media").classList.remove("hidden");$("#media-heading").textContent=S.selectedLib.name+" / 媒体内容";await loadMedia(true);$("#library-media").scrollIntoView({block:"start"})}
 function updateMediaPager(){const limit=Number($("#media-limit").value||50);$("#media-prev").disabled=S.mediaOffset<=0;$("#media-next").disabled=S.mediaOffset+limit>=S.mediaTotal}
 async function loadMedia(reset=false){if(!S.selectedLib)return;if(reset)S.mediaOffset=0;const q=new URLSearchParams({library_id:S.selectedLib.id,limit:$("#media-limit").value,offset:S.mediaOffset});const typ=$("#media-type").value;if(typ)q.set("type",typ);if($("#media-missing").value)q.set("missing",$("#media-missing").value);if($("#media-search").value.trim())q.set("search",$("#media-search").value.trim());$("#media-grid").innerHTML="<div class=muted>加载中</div>";const [r,stats]=await Promise.all([api("GET","/admin/media?"+q),loadMediaStats(false)]);S.mediaTotal=Number(r.total||0);S.mediaItems=r.items||[];$("#media-grid").innerHTML=S.mediaItems.length?S.mediaItems.map(mediaCard).join(""):"<div class=muted>暂无内容</div>";const start=S.mediaItems.length?S.mediaOffset+1:0,end=Math.min(S.mediaOffset+S.mediaItems.length,S.mediaTotal);$("#media-page").textContent=`${start}-${end} / ${S.mediaTotal}`;updateMediaPager();renderMediaStats(stats)}
@@ -501,6 +518,8 @@ function bind(){
     if(act==="open"){await openLib(l.id);return}
     if(act==="scan"){show("scanner");$("#scan-lib").value=l.id;syncScannerFromLibrary();return}
     if(act==="save-path"){const input=c.querySelector("[data-path-input]");await patchLibrary(l,{root_path:(input&&input.value.trim())||""});return}
+    if(act==="save-image"){const poster=c.querySelector("[data-poster-input]");const backdrop=c.querySelector("[data-backdrop-input]");await patchLibrary(l,{poster_url:(poster&&poster.value.trim())||"",backdrop_url:(backdrop&&backdrop.value.trim())||""});return}
+    if(act==="clear-image"){await patchLibrary(l,{poster_url:"",backdrop_url:""});return}
     if(act==="del"&&confirm("删除媒体库？")){await api("DELETE","/admin/libraries/"+l.id);await loadLibraries()}
   };
   $("#library-grid").onchange=e=>{
