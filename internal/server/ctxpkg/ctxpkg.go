@@ -12,6 +12,7 @@ const (
 	keyToken
 	keyIsAdmin
 	keyIsAPIKey
+	keyAdminAccountID
 	keyClient
 	keyDeviceName
 	keyDeviceID
@@ -24,6 +25,12 @@ func WithAuth(ctx context.Context, userID int64, token string, isAdmin, isAPIKey
 	ctx = context.WithValue(ctx, keyToken, token)
 	ctx = context.WithValue(ctx, keyIsAdmin, isAdmin)
 	ctx = context.WithValue(ctx, keyIsAPIKey, isAPIKey)
+	return ctx
+}
+
+// WithAdminAccountID stores the dashboard admin account that owns this session.
+func WithAdminAccountID(ctx context.Context, adminAccountID int64) context.Context {
+	ctx = context.WithValue(ctx, keyAdminAccountID, adminAccountID)
 	return ctx
 }
 
@@ -63,6 +70,15 @@ func IsAdmin(ctx context.Context) bool {
 func IsAPIKey(ctx context.Context) bool {
 	v, _ := ctx.Value(keyIsAPIKey).(bool)
 	return v
+}
+
+// AdminAccountID returns the dashboard admin account id, or 0 when the caller
+// did not authenticate with a dashboard session.
+func AdminAccountID(ctx context.Context) int64 {
+	if v, ok := ctx.Value(keyAdminAccountID).(int64); ok {
+		return v
+	}
+	return 0
 }
 
 // Client returns the X-Emby-Client value associated with this token.

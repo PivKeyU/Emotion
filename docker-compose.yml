@@ -29,6 +29,9 @@ services:
 
       # API_KEY is the admin key used by Sakura_embyboss and other tools.
       API_KEY: ${API_KEY:-change-me-please}
+      # Dashboard login account. The first startup creates this account in DB.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
 
       # TMDB metadata (optional). Leave empty to disable.
       # Get a free v3 key at https://www.themoviedb.org/settings/api

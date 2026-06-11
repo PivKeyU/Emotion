@@ -37,6 +37,9 @@ type Config struct {
 	APIKey      string
 	APIExternal string
 
+	AdminUsername string
+	AdminPassword string
+
 	// TMDBAPIKey enables automatic metadata backfill. Accepts either a v3
 	// API key (32 hex chars) or a v4 bearer token (eyJ...). Leave empty to
 	// disable TMDB integration entirely.
@@ -91,6 +94,9 @@ func Load() *Config {
 
 		APIKey:      getEnv("API_KEY", ""),
 		APIExternal: getEnv("API_EXTERNAL", ""),
+
+		AdminUsername: getEnv("ADMIN_USERNAME", "admin"),
+		AdminPassword: getEnv("ADMIN_PASSWORD", getEnv("API_KEY", "change-me-please")),
 
 		TMDBAPIKey:     getEnv("TMDB_API_KEY", ""),
 		TMDBLanguage:   getEnv("TMDB_LANGUAGE", "zh-CN"),

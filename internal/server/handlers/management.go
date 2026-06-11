@@ -79,9 +79,10 @@ func (m *Management) UsersList(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		enableAll, enabled := userFolderPolicy(folders)
-		out = append(out, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled))
+		user := userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled)
+		m.attachUserDeviceAnomaly(r.Context(), id, user)
+		out = append(out, user)
 	}
-	m.ensureManagementAdminUser(r, &out, "")
 	WriteJSON(w, http.StatusOK, out)
 }
 
@@ -92,8 +93,12 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	prefix := q.Get("namestartswithorgreater")
-	if prefix == "" {
-		prefix = q.Get("name")
+	term := q.Get("searchterm")
+	if term == "" {
+		term = q.Get("search")
+	}
+	if term == "" {
+		term = q.Get("name")
 	}
 
 	var (
@@ -101,13 +106,22 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 		args  []any
 	)
 	where = "deleted_at IS NULL"
-	if prefix != "" {
-		where += " AND username LIKE ?"
+	if term != "" {
+		where += " AND username ILIKE ?"
+		args = append(args, "%"+term+"%")
+	} else if prefix != "" {
+		where += " AND username ILIKE ?"
 		args = append(args, prefix+"%")
 	}
 	total := m.countUsers(r, where, args...)
 	startIndex := parseIntQuery(q.Get("startindex"), 0)
 	limit := parseIntQuery(q.Get("limit"), 0)
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > 200 {
+		limit = 200
+	}
 
 	query := "SELECT id, username, is_can_down, is_admin, is_disable, folders FROM app_user WHERE " + where + " ORDER BY id ASC"
 	queryArgs := append([]any{}, args...)
@@ -144,11 +158,9 @@ func (m *Management) UsersQuery(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		enableAll, enabled := userFolderPolicy(folders)
-		items = append(items, userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled))
-	}
-	addedPseudo := m.ensureManagementAdminUser(r, &items, prefix)
-	if addedPseudo {
-		total++
+		user := userToEmby(m.cfg, id, username.String, isCanDown.Bool, isAdmin.Bool, isDisable.Bool, enableAll, enabled)
+		m.attachUserDeviceAnomaly(r.Context(), id, user)
+		items = append(items, user)
 	}
 	if total == 0 && prefix == "" && len(items) > 0 {
 		total = int64(len(items))
@@ -447,8 +459,8 @@ func (m *Management) AdminUserUpdate(w http.ResponseWriter, r *http.Request) {
 	WriteStatus(w, http.StatusNoContent)
 }
 
-// AdminUserAccessLog returns recent device/IP history rows for a user, newest
-// first. The dashboard renders this in the "设备记录" modal.
+// AdminUserAccessLog returns recent device/IP history rows and unresolved
+// anomaly records for a user. The dashboard renders this in the "设备记录" modal.
 func (m *Management) AdminUserAccessLog(w http.ResponseWriter, r *http.Request) {
 	if !m.requireAdmin(w, r) {
 		return
@@ -502,7 +514,10 @@ func (m *Management) AdminUserAccessLog(w http.ResponseWriter, r *http.Request) 
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
-	WriteJSON(w, http.StatusOK, out)
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"items":     out,
+		"anomalies": m.userDeviceAnomalies(r.Context(), userID),
+	})
 }
 
 func nullTimeToISO(nt sql.NullTime) string {
@@ -860,6 +875,56 @@ func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmi
 	}
 }
 
+func (m *Management) attachUserDeviceAnomaly(ctx context.Context, userID int64, user map[string]any) {
+	anomalies := m.userDeviceAnomalies(ctx, userID)
+	if len(anomalies) == 0 {
+		user["DeviceAnomaly"] = nil
+		return
+	}
+	user["DeviceAnomaly"] = anomalies[0]
+	policy, _ := user["Policy"].(map[string]any)
+	if policy != nil {
+		policy["DeviceAnomaly"] = anomalies[0]
+	}
+}
+
+func (m *Management) userDeviceAnomalies(ctx context.Context, userID int64) []map[string]any {
+	if userID <= 0 {
+		return []map[string]any{}
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT reason, COALESCE(detail, ''), first_seen_at, last_seen_at
+		FROM user_device_anomaly
+		WHERE user_id = ? AND resolved_at IS NULL
+		ORDER BY last_seen_at DESC
+		LIMIT 10
+	`, userID)
+	if err != nil {
+		if m.log != nil {
+			m.log.Warn("device anomaly query failed", "category", "auth", "err", err)
+		}
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var (
+			reason, detail      string
+			firstSeen, lastSeen sql.NullTime
+		)
+		if err := rows.Scan(&reason, &detail, &firstSeen, &lastSeen); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"Reason":      reason,
+			"Detail":      detail,
+			"FirstSeenAt": nullTimeToISO(firstSeen),
+			"LastSeenAt":  nullTimeToISO(lastSeen),
+		})
+	}
+	return out
+}
+
 func (m *Management) allLibraryIDs(r *http.Request) []int64 {
 	rows, err := m.db.QueryContext(r.Context(), "SELECT id FROM library WHERE deleted_at IS NULL AND COALESCE(is_hidden, false) = false ORDER BY id ASC")
 	if err != nil {
@@ -898,41 +963,6 @@ func (m *Management) countUsers(r *http.Request, where string, args ...any) int6
 	var count int64
 	_ = m.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM app_user WHERE "+where, args...).Scan(&count)
 	return count
-}
-
-func (m *Management) ensureManagementAdminUser(r *http.Request, users *[]any, prefix string) bool {
-	if prefix != "" && !strings.HasPrefix(strings.ToLower("admin"), strings.ToLower(prefix)) {
-		return false
-	}
-	hasAdmin := false
-	for _, raw := range *users {
-		user, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		name, _ := user["Name"].(string)
-		if strings.EqualFold(name, "admin") {
-			hasAdmin = true
-			break
-		}
-		policy, ok := user["Policy"].(map[string]any)
-		if ok && policy["IsAdministrator"] == true {
-			name, _ := user["Name"].(string)
-			if strings.EqualFold(name, "admin") {
-				hasAdmin = true
-				break
-			}
-		}
-	}
-	if hasAdmin {
-		return false
-	}
-	*users = append([]any{m.pseudoAdminUser(r)}, (*users)...)
-	return true
-}
-
-func (m *Management) pseudoAdminUser(r *http.Request) map[string]any {
-	return userToEmby(m.cfg, 0, "admin", true, true, false, true, idsToFolderStrings(m.allLibraryIDs(r)))
 }
 
 func idsToFolderStrings(ids []int64) []string {

@@ -23,7 +23,7 @@ func NewRouter(deps *Dependencies) http.Handler {
 	admin := handlers.NewAdmin(deps.DB, deps.Config, deps.Logger)
 
 	// Visual admin dashboard. The HTML is a public asset; /admin/login validates
-	// the bootstrap admin secret and returns a dashboard session token.
+	// the dashboard admin account and returns a dashboard session token.
 	r.Post("/admin/login", admin.Login)
 	r.Get("/admin/ui", dash.Page)
 	r.Get("/admin/ui/", dash.Page)
@@ -178,6 +178,8 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Patch("/admin/media/{id}", admin.AdminMediaUpdate)
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Get("/admin/logs", admin.Logs)
+		r.Get("/admin/account", admin.AdminAccountGet)
+		r.Patch("/admin/account", admin.AdminAccountUpdate)
 		r.Patch("/admin/users/{userId}", mgmt.AdminUserUpdate)
 		r.Get("/admin/users/{userId}/access-log", mgmt.AdminUserAccessLog)
 		r.Get("/admin/api-keys", admin.APIKeysList)

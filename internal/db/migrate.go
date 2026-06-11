@@ -26,6 +26,7 @@ var migrations = []string{
 
 	`CREATE TABLE IF NOT EXISTS admin_session (
 		id BIGSERIAL PRIMARY KEY,
+		admin_account_id BIGINT NULL,
 		token VARCHAR(64) NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 		last_used_at TIMESTAMPTZ NULL,
@@ -33,8 +34,22 @@ var migrations = []string{
 		revoked_at TIMESTAMPTZ NULL,
 		CONSTRAINT unx_admin_session_token UNIQUE (token)
 	)`,
+	`ALTER TABLE admin_session ADD COLUMN IF NOT EXISTS admin_account_id BIGINT NULL`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_session_token ON admin_session (token)`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_session_revoked ON admin_session (revoked_at)`,
+
+	`CREATE TABLE IF NOT EXISTS admin_account (
+		id BIGSERIAL PRIMARY KEY,
+		username VARCHAR(255) NOT NULL,
+		password_hash VARCHAR(255) NOT NULL,
+		is_disabled BOOLEAN NOT NULL DEFAULT false,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_login_at TIMESTAMPTZ NULL,
+		CONSTRAINT unx_admin_account_username UNIQUE (username)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_admin_account_username ON admin_account (username)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS unx_admin_account_username_lower ON admin_account (LOWER(username))`,
 
 	`CREATE TABLE IF NOT EXISTS admin_api_key (
 		id BIGSERIAL PRIMARY KEY,
@@ -42,12 +57,14 @@ var migrations = []string{
 		remark TEXT NULL,
 		token_hash CHAR(64) NOT NULL,
 		token_prefix VARCHAR(16) NOT NULL,
+		token_value TEXT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 		last_used_at TIMESTAMPTZ NULL,
 		revoked_at TIMESTAMPTZ NULL,
 		CONSTRAINT unx_admin_api_key_hash UNIQUE (token_hash)
 	)`,
 	`ALTER TABLE admin_api_key ADD COLUMN IF NOT EXISTS remark TEXT NULL`,
+	`ALTER TABLE admin_api_key ADD COLUMN IF NOT EXISTS token_value TEXT NULL`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_api_key_hash ON admin_api_key (token_hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_admin_api_key_revoked ON admin_api_key (revoked_at)`,
 
@@ -341,6 +358,18 @@ var migrations = []string{
 		CONSTRAINT unx_user_access UNIQUE (user_id, device_id, ip)
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_ual_user_last ON user_access_log (user_id, last_seen_at DESC)`,
+
+	`CREATE TABLE IF NOT EXISTS user_device_anomaly (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		reason VARCHAR(255) NOT NULL,
+		detail TEXT NULL,
+		first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		resolved_at TIMESTAMPTZ NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_uda_user_last ON user_device_anomaly (user_id, last_seen_at DESC)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS unx_uda_open_reason ON user_device_anomaly (user_id, reason) WHERE resolved_at IS NULL`,
 }
 
 // Migrate applies the schema. Safe to call every startup.

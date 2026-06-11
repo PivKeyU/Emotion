@@ -154,17 +154,23 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 			}
 
 			// Check dashboard session tokens minted by /admin/login.
-			var adminSessionID int64
+			var (
+				adminSessionID int64
+				adminAccountID sql.NullInt64
+			)
 			err := deps.DB.QueryRowContext(r.Context(), `
-				SELECT id FROM admin_session
+				SELECT id, admin_account_id FROM admin_session
 				WHERE token = ? AND revoked_at IS NULL
 				  AND (expires_at IS NULL OR expires_at > NOW())
 				LIMIT 1`, token,
-			).Scan(&adminSessionID)
+			).Scan(&adminSessionID, &adminAccountID)
 			if err == nil {
 				_, _ = deps.DB.ExecContext(r.Context(),
 					"UPDATE admin_session SET last_used_at = NOW() WHERE id = ?", adminSessionID)
-				ctx := ctxpkg.WithAuth(r.Context(), 0, token, true, true)
+				ctx := ctxpkg.WithAuth(r.Context(), 0, token, true, false)
+				if adminAccountID.Valid {
+					ctx = ctxpkg.WithAdminAccountID(ctx, adminAccountID.Int64)
+				}
 				ctx = ctxpkg.WithDevice(ctx, "", "", "", remoteAddr)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

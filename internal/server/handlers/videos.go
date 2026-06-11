@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -51,11 +52,16 @@ func NewVideos(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Log
 // The URL path looks like /Videos/{mediaUUID}/{mediaName} where mediaName can be
 // "original.strm", "original.mkv", etc. The name is ignored; only mediaUUID matters.
 // mediaUUID may also be an emby item-id (e.g. vl-42), in which case we pick the
-// first associated media row.
+// first associated media row. When a MediaSourceId query parameter is present,
+// it wins because that is the actual video_media UUID selected by the client.
 func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 	mediaKey := chi.URLParam(r, "mediaUUID")
 	line := r.URL.Query().Get("line")
 	userID := ctxpkg.UserID(r.Context())
+
+	if sourceID := mediaSourceIDFromRequest(r); sourceID != "" {
+		mediaKey = sourceID
+	}
 
 	cacheKey := fmt.Sprintf("video_play_%s_%d_%s", mediaKey, userID, line)
 	if r.Method != http.MethodHead {
@@ -81,7 +87,7 @@ func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 			WriteStatus(w, http.StatusUnprocessableEntity)
 			return
 		}
-		query := fmt.Sprintf("SELECT uuid FROM video_media WHERE %s = ? AND deleted_at IS NULL LIMIT 1", col)
+		query := fmt.Sprintf("SELECT uuid FROM video_media WHERE %s = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1", col)
 		var found db.NullString
 		if err := v.db.QueryRowContext(ctx, query, numericID).Scan(&found); err != nil || !found.Valid {
 			WriteStatus(w, http.StatusForbidden)
@@ -174,6 +180,27 @@ func (v *Videos) Play(w http.ResponseWriter, r *http.Request) {
 	v.cache.Set(ctx, cacheKey, playURL, cacheTTL)
 	w.Header().Set("Cache-Control", fmt.Sprintf("private, max-age=%d", int(cacheTTL.Seconds())))
 	http.Redirect(w, r, playURL, http.StatusPermanentRedirect)
+}
+
+func mediaSourceIDFromRequest(r *http.Request) string {
+	q := r.URL.Query()
+	for _, key := range []string{"mediasourceid", "MediaSourceId", "MediaSourceID", "mediaSourceId", "media_source_id"} {
+		if id := normalizeMediaSourceID(q.Get(key)); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func normalizeMediaSourceID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	if idx := strings.Index(id, "_"); idx > 0 {
+		id = id[:idx]
+	}
+	return id
 }
 
 type playURLResult struct {

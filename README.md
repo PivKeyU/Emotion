@@ -40,13 +40,14 @@ http://localhost:8096
 http://localhost:8096/admin/ui
 ```
 
-Docker Compose 默认管理密钥配置在 `docker-compose.yml` 中：
+Docker Compose 首次启动会创建默认后台账号：
 
 ```text
-change-me-please
+账号：admin
+密码：change-me-please
 ```
 
-在公网或局域网暴露服务前，请务必修改 `API_KEY`。
+在公网或局域网暴露服务前，请务必修改后台密码和 `API_KEY`。`API_KEY` 仅用于第三方工具、插件或直接 API 调用，不再作为管理后台登录密码。
 
 ## Docker Compose
 
@@ -76,7 +77,9 @@ volumes:
 
 | 变量 | 说明 |
 | --- | --- |
-| `API_KEY` | 管理后台和第三方工具使用的管理 API Key。 |
+| `API_KEY` | 第三方工具、插件或直接 API 调用使用的管理 API Key。 |
+| `ADMIN_USERNAME` | 首次没有后台账号时初始化的管理后台账号，默认 `admin`。 |
+| `ADMIN_PASSWORD` | 首次没有后台账号时初始化的管理后台密码，默认回退到 `API_KEY`，再回退到 `change-me-please`。 |
 | `SERVER_PORT` | HTTP 服务端口，默认 `8096`。 |
 | `DB_DRIVER` | 数据库驱动，请使用 `postgres`。 |
 | `DB_HOST` | PostgreSQL 主机地址。 |
@@ -164,6 +167,8 @@ GET  /admin/tmdb/refresh-all/{job_id}
 
 ## 管理后台媒体管理
 
+管理后台使用独立的后台账号密码登录，账号可在 `设置` 页修改。第三方工具和插件请使用 `API_KEY` 或在 `API Key` 页生成独立 Key；新版本生成的 Key 会保存在数据库中，后续仍可在列表中查看。旧版本生成的 Key 因历史上只保存哈希，升级后仍可继续使用和撤销，但只能显示前缀。
+
 管理后台支持：
 
 - 分页条数选择：`30`、`50`、`100`
@@ -174,6 +179,8 @@ GET  /admin/tmdb/refresh-all/{job_id}
 - 一键刮削缺失媒体
 - 手动编辑元数据
 - 单个媒体 TMDB 刷新
+- 用户列表分页、每页条数选择和用户名搜索
+- 自动记录用户设备 / IP，并标记 24 小时内设备或 IP 数量异常的用户
 
 常用 API：
 

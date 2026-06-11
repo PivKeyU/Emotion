@@ -86,6 +86,8 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 		tmdbJobs:  map[string]*tmdbRefreshJob{},
 		probeJobs: map[string]*mediaProbeJob{},
 	}
+	a.ensureDefaultAdminAccount(context.Background())
+	a.revokeLegacyAdminSessions(context.Background())
 	settings := a.loadTMDBSettings(context.Background())
 	a.cfg.TMDBAutoScrape = settings.AutoScrape
 	a.cfg.TVDBAPIKey = a.rawSetting(context.Background(), "tvdb_api_key", cfg.TVDBAPIKey)
@@ -96,6 +98,48 @@ func NewAdmin(database *db.DB, cfg *config.Config, log *slog.Logger) *Admin {
 	return a
 }
 
+func (a *Admin) ensureDefaultAdminAccount(ctx context.Context) {
+	var count int64
+	if err := a.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM admin_account").Scan(&count); err != nil {
+		a.log.Error("admin account count failed", "category", "auth", "err", err)
+		return
+	}
+	if count > 0 {
+		return
+	}
+	username := strings.TrimSpace(a.cfg.AdminUsername)
+	if username == "" {
+		username = "admin"
+	}
+	password := a.cfg.AdminPassword
+	if strings.TrimSpace(password) == "" {
+		password = "change-me-please"
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		a.log.Error("admin account password hash failed", "category", "auth", "err", err)
+		return
+	}
+	if _, err := a.db.ExecContext(ctx, `
+		INSERT INTO admin_account (username, password_hash)
+		VALUES (?, ?)
+	`, username, hash); err != nil {
+		a.log.Error("default admin account create failed", "category", "auth", "err", err)
+		return
+	}
+	a.log.Info("default admin account created", "category", "auth", "username", username)
+}
+
+func (a *Admin) revokeLegacyAdminSessions(ctx context.Context) {
+	if _, err := a.db.ExecContext(ctx, `
+		UPDATE admin_session
+		SET revoked_at = NOW()
+		WHERE admin_account_id IS NULL AND revoked_at IS NULL
+	`); err != nil {
+		a.log.Warn("legacy admin sessions revoke failed", "category", "auth", "err", err)
+	}
+}
+
 func (a *Admin) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if ctxpkg.IsAPIKey(r.Context()) || ctxpkg.IsAdmin(r.Context()) {
 		return true
@@ -104,11 +148,53 @@ func (a *Admin) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-type loginRequest struct {
-	APIKey string `json:"api_key"`
+func (a *Admin) requireDashboardAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if ctxpkg.IsAdmin(r.Context()) && ctxpkg.AdminAccountID(r.Context()) > 0 {
+		return true
+	}
+	WriteText(w, http.StatusForbidden, "请使用后台账号登录")
+	return false
 }
 
-// Login validates the bootstrap admin key and returns a dashboard session token.
+func (a *Admin) currentAdminAccount(r *http.Request) (*adminAccountResponse, error) {
+	accountID := ctxpkg.AdminAccountID(r.Context())
+	var (
+		username  string
+		lastLogin sql.NullTime
+	)
+	if err := a.db.QueryRowContext(r.Context(), `
+		SELECT username, last_login_at
+		FROM admin_account
+		WHERE id = ? AND is_disabled = false
+		LIMIT 1
+	`, accountID).Scan(&username, &lastLogin); err != nil {
+		return nil, err
+	}
+	return &adminAccountResponse{
+		ID:          accountID,
+		Username:    username,
+		LastLoginAt: nullTimeToISO(lastLogin),
+	}, nil
+}
+
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type adminAccountResponse struct {
+	ID          int64  `json:"id"`
+	Username    string `json:"username"`
+	LastLoginAt string `json:"last_login_at,omitempty"`
+}
+
+type adminAccountUpdateRequest struct {
+	Username        string `json:"username"`
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// Login validates the dashboard admin account and returns a session token.
 // POST /admin/login
 func (a *Admin) Login(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest
@@ -117,30 +203,134 @@ func (a *Admin) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer r.Body.Close()
-	if strings.TrimSpace(a.cfg.APIKey) == "" {
-		WriteText(w, http.StatusServiceUnavailable, "server API_KEY is not configured")
+	username := strings.TrimSpace(body.Username)
+	password := body.Password
+	if username == "" || password == "" {
+		WriteText(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
-	if body.APIKey != a.cfg.APIKey {
-		a.log.Warn("admin login failed", "category", "auth")
-		WriteText(w, http.StatusUnauthorized, "登录失败")
+	var (
+		accountID  int64
+		storedHash string
+		isDisabled bool
+	)
+	err := a.db.QueryRowContext(r.Context(), `
+		SELECT id, password_hash, is_disabled
+		FROM admin_account
+		WHERE LOWER(username) = LOWER(?)
+		LIMIT 1
+	`, username).Scan(&accountID, &storedHash, &isDisabled)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			a.log.Error("admin login lookup failed", "category", "auth", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+		a.log.Warn("admin login failed", "category", "auth", "username", username)
+		WriteText(w, http.StatusUnauthorized, "用户名或密码错误")
+		return
+	}
+	if isDisabled || !auth.VerifyPassword(storedHash, password) {
+		a.log.Warn("admin login failed", "category", "auth", "username", username)
+		WriteText(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
 	token := auth.RandomToken(32)
 	expires := time.Now().Add(7 * 24 * time.Hour)
 	if _, err := a.db.ExecContext(r.Context(), `
-		INSERT INTO admin_session (token, expires_at)
-		VALUES (?, ?)
-	`, token, expires); err != nil {
+		INSERT INTO admin_session (admin_account_id, token, expires_at)
+		VALUES (?, ?, ?)
+	`, accountID, token, expires); err != nil {
 		a.log.Error("admin session create failed", "category", "auth", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
 		return
 	}
-	a.log.Info("admin login ok", "category", "auth")
+	_, _ = a.db.ExecContext(r.Context(), "UPDATE admin_account SET last_login_at = NOW() WHERE id = ?", accountID)
+	a.log.Info("admin login ok", "category", "auth", "username", username)
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"token":      token,
 		"expires_at": expires,
 	})
+}
+
+// AdminAccountGet returns the dashboard admin account behind this session.
+// GET /admin/account
+func (a *Admin) AdminAccountGet(w http.ResponseWriter, r *http.Request) {
+	if !a.requireDashboardAdmin(w, r) {
+		return
+	}
+	account, err := a.currentAdminAccount(r)
+	if err != nil {
+		a.log.Error("admin account lookup failed", "category", "auth", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	WriteJSON(w, http.StatusOK, account)
+}
+
+// AdminAccountUpdate changes the dashboard admin username and/or password.
+// PATCH /admin/account
+func (a *Admin) AdminAccountUpdate(w http.ResponseWriter, r *http.Request) {
+	if !a.requireDashboardAdmin(w, r) {
+		return
+	}
+	accountID := ctxpkg.AdminAccountID(r.Context())
+	var body adminAccountUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		WriteText(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	defer r.Body.Close()
+
+	var (
+		currentUsername string
+		currentHash     string
+	)
+	if err := a.db.QueryRowContext(r.Context(),
+		"SELECT username, password_hash FROM admin_account WHERE id = ? AND is_disabled = false",
+		accountID,
+	).Scan(&currentUsername, &currentHash); err != nil {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	if !auth.VerifyPassword(currentHash, body.CurrentPassword) {
+		WriteText(w, http.StatusUnauthorized, "当前密码错误")
+		return
+	}
+
+	username := strings.TrimSpace(body.Username)
+	if username == "" {
+		username = currentUsername
+	}
+	sets := []string{"username = ?", "updated_at = NOW()"}
+	args := []any{username}
+	if strings.TrimSpace(body.NewPassword) != "" {
+		hash, err := auth.HashPassword(body.NewPassword)
+		if err != nil {
+			WriteText(w, http.StatusInternalServerError, "hash failed")
+			return
+		}
+		sets = append(sets, "password_hash = ?")
+		args = append(args, hash)
+	}
+	args = append(args, accountID)
+	res, err := a.db.ExecContext(r.Context(),
+		"UPDATE admin_account SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		a.log.Error("admin account update failed", "category", "auth", "err", err)
+		WriteText(w, http.StatusConflict, "账号名已存在或更新失败")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	account, err := a.currentAdminAccount(r)
+	if err != nil {
+		WriteStatus(w, http.StatusNoContent)
+		return
+	}
+	WriteJSON(w, http.StatusOK, account)
 }
 
 func (a *Admin) hydrateScanRequest(ctx context.Context, body *scanRequest) error {
@@ -186,14 +376,15 @@ type apiKeyCreateRequest struct {
 	Remark string `json:"remark"`
 }
 
-// APIKeysList lists server-generated keys without revealing the secret.
+// APIKeysList lists server-generated keys. New keys keep their clear value so
+// administrators can inspect them again from the dashboard.
 // GET /admin/api-keys
 func (a *Admin) APIKeysList(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if !a.requireDashboardAdmin(w, r) {
 		return
 	}
 	rows, err := a.db.QueryContext(r.Context(), `
-		SELECT id, name, COALESCE(remark, ''), token_prefix, created_at, last_used_at
+		SELECT id, name, COALESCE(remark, ''), token_prefix, COALESCE(token_value, ''), created_at, last_used_at
 		FROM admin_api_key
 		WHERE revoked_at IS NULL
 		ORDER BY id DESC
@@ -211,10 +402,11 @@ func (a *Admin) APIKeysList(w http.ResponseWriter, r *http.Request) {
 			name     string
 			remark   string
 			prefix   string
+			token    string
 			created  time.Time
 			lastUsed sql.NullTime
 		)
-		if err := rows.Scan(&id, &name, &remark, &prefix, &created, &lastUsed); err != nil {
+		if err := rows.Scan(&id, &name, &remark, &prefix, &token, &created, &lastUsed); err != nil {
 			continue
 		}
 		m := map[string]any{
@@ -222,6 +414,8 @@ func (a *Admin) APIKeysList(w http.ResponseWriter, r *http.Request) {
 			"name":         name,
 			"remark":       remark,
 			"token_prefix": prefix,
+			"token":        token,
+			"has_token":    token != "",
 			"created_at":   created,
 		}
 		if lastUsed.Valid {
@@ -232,10 +426,11 @@ func (a *Admin) APIKeysList(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, out)
 }
 
-// APIKeyCreate creates a per-tool API key. The clear token is returned once.
+// APIKeyCreate creates a per-tool API key. The clear token is stored so it can
+// be shown later in the dashboard.
 // POST /admin/api-keys
 func (a *Admin) APIKeyCreate(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if !a.requireDashboardAdmin(w, r) {
 		return
 	}
 	var body apiKeyCreateRequest
@@ -256,9 +451,9 @@ func (a *Admin) APIKeyCreate(w http.ResponseWriter, r *http.Request) {
 		prefix = prefix[:16]
 	}
 	res, err := a.db.ExecContext(r.Context(), `
-		INSERT INTO admin_api_key (name, remark, token_hash, token_prefix)
-		VALUES (?, ?, ?, ?)
-	`, body.Name, nullableString(body.Remark), hashToken(token), prefix)
+		INSERT INTO admin_api_key (name, remark, token_hash, token_prefix, token_value)
+		VALUES (?, ?, ?, ?, ?)
+	`, body.Name, nullableString(body.Remark), hashToken(token), prefix, token)
 	if err != nil {
 		a.log.Error("api key create failed", "category", "auth", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -278,7 +473,7 @@ func (a *Admin) APIKeyCreate(w http.ResponseWriter, r *http.Request) {
 // APIKeyRevoke revokes a generated API key.
 // DELETE /admin/api-keys/{id}
 func (a *Admin) APIKeyRevoke(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if !a.requireDashboardAdmin(w, r) {
 		return
 	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
