@@ -511,6 +511,7 @@ func nullTimeToISO(nt sql.NullTime) string {
 	}
 	return nt.Time.UTC().Format("2006-01-02T15:04:05Z")
 }
+
 // to push to, but we succeed silently so the bot's UX doesn't break.
 func (m *Management) SessionMessage(w http.ResponseWriter, r *http.Request) {
 	if !m.requireAdmin(w, r) {
@@ -860,7 +861,7 @@ func userToEmby(cfg *config.Config, id int64, username string, isCanDown, isAdmi
 }
 
 func (m *Management) allLibraryIDs(r *http.Request) []int64 {
-	rows, err := m.db.QueryContext(r.Context(), "SELECT id FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
+	rows, err := m.db.QueryContext(r.Context(), "SELECT id FROM library WHERE deleted_at IS NULL AND COALESCE(is_hidden, false) = false ORDER BY id ASC")
 	if err != nil {
 		return nil
 	}

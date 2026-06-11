@@ -45,11 +45,29 @@ func (t *Transform) UserFolders(ctx context.Context, userID int64) ([]int64, err
 	if err := json.Unmarshal([]byte(folders.String), &out); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return t.filterVisibleLibraryIDs(ctx, out)
 }
 
-// AllLibraryIDs returns every non-deleted library id in display order.
+// AllLibraryIDs returns every non-hidden, non-deleted library id in display order.
 func (t *Transform) AllLibraryIDs(ctx context.Context) ([]int64, error) {
+	rows, err := t.db.QueryContext(ctx, "SELECT id FROM library WHERE deleted_at IS NULL AND COALESCE(is_hidden, false) = false ORDER BY id ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// AllLibraryIDsForAdmin returns every non-deleted library id in display order.
+func (t *Transform) AllLibraryIDsForAdmin(ctx context.Context) ([]int64, error) {
 	rows, err := t.db.QueryContext(ctx, "SELECT id FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
 	if err != nil {
 		return nil, err
@@ -64,6 +82,43 @@ func (t *Transform) AllLibraryIDs(ctx context.Context) ([]int64, error) {
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+func (t *Transform) filterVisibleLibraryIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	ids = uniquePositiveIDs(ids)
+	if len(ids) == 0 {
+		return []int64{}, nil
+	}
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := t.db.QueryContext(ctx,
+		"SELECT id FROM library WHERE id IN ("+placeholdersForIDs(ids)+") AND deleted_at IS NULL AND COALESCE(is_hidden, false) = false ORDER BY id ASC",
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	allowed := map[int64]struct{}{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		allowed[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := allowed[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }
 
 // User builds the Emby user object (at /Users/{id}).
@@ -190,7 +245,7 @@ func (t *Transform) blockedLibraryNames(ctx context.Context, enableAllFolders bo
 	for _, id := range enabledIDs {
 		enabled[id] = struct{}{}
 	}
-	rows, err := t.db.QueryContext(ctx, "SELECT id, name FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
+	rows, err := t.db.QueryContext(ctx, "SELECT id, name FROM library WHERE deleted_at IS NULL AND COALESCE(is_hidden, false) = false ORDER BY id ASC")
 	if err != nil {
 		return []any{}
 	}
@@ -212,7 +267,7 @@ func (t *Transform) blockedLibraryNames(ctx context.Context, enableAllFolders bo
 }
 
 func (t *Transform) pseudoAdminUser(ctx context.Context) (map[string]any, error) {
-	ids, err := t.AllLibraryIDs(ctx)
+	ids, err := t.AllLibraryIDsForAdmin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -346,12 +401,25 @@ func (t *Transform) runtimeSeconds(ctx context.Context, videoListID, videoEpisod
 	return 0
 }
 
+// GetAdminLibrary returns all non-deleted libraries for management callers.
+func (t *Transform) GetAdminLibrary(ctx context.Context) ([]any, error) {
+	folders, err := t.AllLibraryIDsForAdmin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return t.libraryItems(ctx, folders, false)
+}
+
 // GetUserLibrary returns the list of libraries (CollectionFolder) the user can see.
 func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, error) {
 	folders, err := t.UserFolders(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	return t.libraryItems(ctx, folders, true)
+}
+
+func (t *Transform) libraryItems(ctx context.Context, folders []int64, filterHidden bool) ([]any, error) {
 	if len(folders) == 0 {
 		return []any{}, nil
 	}
@@ -366,8 +434,12 @@ func (t *Transform) GetUserLibrary(ctx context.Context, userID int64) ([]any, er
 		args = append(args, id)
 	}
 
+	hiddenClause := ""
+	if filterHidden {
+		hiddenClause = " AND COALESCE(is_hidden, false) = false"
+	}
 	rows, err := t.db.QueryContext(ctx,
-		fmt.Sprintf("SELECT id, name, COALESCE(role, ''), COALESCE(root_path, '') FROM library WHERE id IN (%s) ORDER BY id ASC", placeholders),
+		fmt.Sprintf("SELECT id, name, COALESCE(role, ''), COALESCE(root_path, '') FROM library WHERE id IN (%s) AND deleted_at IS NULL%s ORDER BY id ASC", placeholders, hiddenClause),
 		args...,
 	)
 	if err != nil {

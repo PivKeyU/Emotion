@@ -555,6 +555,7 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			COALESCE(l.root_path, ''),
 			l.watch_enabled,
 			l.watch_interval_seconds,
+			l.is_hidden,
 			l.created_at,
 			COALESCE(lc.item_count, 0) AS item_count,
 			COALESCE(lc.movie_count, 0) AS movie_count,
@@ -591,6 +592,7 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			rootPath             string
 			watchEnabled         bool
 			watchIntervalSeconds int
+			isHidden             bool
 			createdAt            sql.NullTime
 			itemCount            int64
 			movieCount           int64
@@ -603,7 +605,7 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			backdropPath         string
 		)
 		if err := rows.Scan(
-			&id, &name, &role, &rootPath, &watchEnabled, &watchIntervalSeconds, &createdAt,
+			&id, &name, &role, &rootPath, &watchEnabled, &watchIntervalSeconds, &isHidden, &createdAt,
 			&itemCount, &movieCount, &seriesCount, &episodeCount, &mediaCount,
 			&posterType, &posterPath, &backdropType, &backdropPath,
 		); err != nil {
@@ -618,6 +620,7 @@ func (a *Admin) LibrariesList(w http.ResponseWriter, r *http.Request) {
 			"root_path":              rootPath,
 			"watch_enabled":          watchEnabled,
 			"watch_interval_seconds": watchIntervalSeconds,
+			"is_hidden":              isHidden,
 			"item_count":             itemCount,
 			"movie_count":            movieCount,
 			"series_count":           seriesCount,
@@ -644,6 +647,7 @@ type libraryCreateBody struct {
 	RootPath             string  `json:"root_path"`
 	WatchEnabled         bool    `json:"watch_enabled"`
 	WatchIntervalSeconds int     `json:"watch_interval_seconds"`
+	IsHidden             bool    `json:"is_hidden"`
 	PosterURL            *string `json:"poster_url"`
 	BackdropURL          *string `json:"backdrop_url"`
 }
@@ -669,8 +673,8 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 	root := nullableString(strings.TrimSpace(body.RootPath))
 	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
 	res, err := a.db.ExecContext(r.Context(),
-		"INSERT INTO library (name, role, root_path, watch_enabled, watch_interval_seconds) VALUES (?, ?, ?, ?, ?)",
-		body.Name, role, root, body.WatchEnabled, interval)
+		"INSERT INTO library (name, role, root_path, watch_enabled, watch_interval_seconds, is_hidden) VALUES (?, ?, ?, ?, ?, ?)",
+		body.Name, role, root, body.WatchEnabled, interval, body.IsHidden)
 	if err != nil {
 		a.log.Error("library create failed", "category", "admin", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -701,6 +705,7 @@ func (a *Admin) LibraryCreate(w http.ResponseWriter, r *http.Request) {
 		"root_path":              body.RootPath,
 		"watch_enabled":          body.WatchEnabled,
 		"watch_interval_seconds": interval,
+		"is_hidden":              body.IsHidden,
 		"poster_url":             valueOrEmpty(body.PosterURL),
 		"backdrop_url":           valueOrEmpty(body.BackdropURL),
 	})
@@ -743,9 +748,9 @@ func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
 	interval := normalizeWatchInterval(body.WatchIntervalSeconds)
 	_, err = a.db.ExecContext(r.Context(), `
 		UPDATE library
-		SET name = ?, role = ?, root_path = ?, watch_enabled = ?, watch_interval_seconds = ?, updated_at = NOW()
+		SET name = ?, role = ?, root_path = ?, watch_enabled = ?, watch_interval_seconds = ?, is_hidden = ?, updated_at = NOW()
 		WHERE id = ? AND deleted_at IS NULL
-	`, body.Name, nullableString(body.Role), nullableString(body.RootPath), body.WatchEnabled, interval, id)
+	`, body.Name, nullableString(body.Role), nullableString(body.RootPath), body.WatchEnabled, interval, body.IsHidden, id)
 	if err != nil {
 		a.log.Error("library update failed", "category", "admin", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -777,6 +782,7 @@ func (a *Admin) LibraryUpdate(w http.ResponseWriter, r *http.Request) {
 		"root_path":              body.RootPath,
 		"watch_enabled":          body.WatchEnabled,
 		"watch_interval_seconds": interval,
+		"is_hidden":              body.IsHidden,
 		"poster_url":             valueOrEmpty(body.PosterURL),
 		"backdrop_url":           valueOrEmpty(body.BackdropURL),
 	})
@@ -1756,6 +1762,13 @@ type scanRequest struct {
 	Scrape string `json:"scrape"`
 }
 
+type scanAllRequest struct {
+	FollowSymlinks bool   `json:"follow_symlinks"`
+	DryRun         bool   `json:"dry_run"`
+	ProbeMedia     bool   `json:"probe_media"`
+	Scrape         string `json:"scrape"`
+}
+
 type scanJob struct {
 	ID         string            `json:"id"`
 	Status     string            `json:"status"`
@@ -1901,6 +1914,51 @@ func (a *Admin) LibraryScanStart(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusAccepted, job)
 }
 
+// LibraryScanAllStart starts async scan jobs for every library with root_path.
+// POST /admin/library/scan-all/start
+func (a *Admin) LibraryScanAllStart(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	var body scanAllRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		defer r.Body.Close()
+	}
+
+	reqs, err := a.scanRequestsForAllLibraries(r.Context(), body)
+	if err != nil {
+		a.log.Error("scan all libraries query failed", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	started := []any{}
+	errorsOut := []string{}
+	for _, req := range reqs {
+		job, err := a.startScanJob(req)
+		if err != nil {
+			errorsOut = append(errorsOut, fmt.Sprintf("library_id=%d root=%s: %v", req.LibraryID, req.Root, err))
+			continue
+		}
+		started = append(started, job)
+	}
+	if len(started) == 0 {
+		WriteJSON(w, http.StatusBadRequest, map[string]any{
+			"message": "no scannable libraries with a valid root_path",
+			"errors":  errorsOut,
+		})
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, map[string]any{
+		"items":              started,
+		"Items":              started,
+		"total":              len(started),
+		"TotalRecordCount":   len(started),
+		"errors":             errorsOut,
+		"failed_start_count": len(errorsOut),
+	})
+}
+
 // LibraryScanStatus returns the latest status for an async scan job.
 // GET /admin/library/scan/{id}
 func (a *Admin) LibraryScanStatus(w http.ResponseWriter, r *http.Request) {
@@ -1976,6 +2034,31 @@ func (a *Admin) runScanJob(ctx context.Context, body scanRequest, progress func(
 	}
 
 	return report, nil
+}
+
+func (a *Admin) scanRequestsForAllLibraries(ctx context.Context, body scanAllRequest) ([]scanRequest, error) {
+	rows, err := a.db.QueryContext(ctx, `
+		SELECT id, COALESCE(root_path, ''), COALESCE(role, '')
+		FROM library
+		WHERE deleted_at IS NULL AND COALESCE(root_path, '') <> ''
+		ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []scanRequest{}
+	for rows.Next() {
+		var req scanRequest
+		if err := rows.Scan(&req.LibraryID, &req.Root, &req.DefaultType); err != nil {
+			return nil, err
+		}
+		req.FollowSymlinks = body.FollowSymlinks
+		req.DryRun = body.DryRun
+		req.ProbeMedia = body.ProbeMedia
+		req.Scrape = body.Scrape
+		out = append(out, req)
+	}
+	return out, rows.Err()
 }
 
 func (a *Admin) scrapeVideoLists(ctx context.Context, ids []int64, force bool, progress func(tmdb.BatchResult)) []*tmdb.ScrapeResult {

@@ -188,6 +188,7 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Post("/admin/tmdb/settings/test", admin.TMDBSettingsTest)
 		r.Post("/admin/library/scan", admin.LibraryScan)
 		r.Post("/admin/library/scan/start", admin.LibraryScanStart)
+		r.Post("/admin/library/scan-all/start", admin.LibraryScanAllStart)
 		r.Get("/admin/library/scan/{id}", admin.LibraryScanStatus)
 		r.Post("/admin/library/watch/start", admin.LibraryWatchStart)
 		r.Get("/admin/library/watch", admin.LibraryWatchStatus)

@@ -33,7 +33,15 @@ func NewLibrary(database *db.DB, cfg *config.Config, log *slog.Logger) *Library 
 
 // MediaFolders is the list of top-level libraries visible to the caller.
 func (l *Library) MediaFolders(w http.ResponseWriter, r *http.Request) {
-	rows, err := l.transform.GetUserLibrary(r.Context(), ctxpkg.UserID(r.Context()))
+	var (
+		rows []any
+		err  error
+	)
+	if ctxpkg.IsAPIKey(r.Context()) || (ctxpkg.IsAdmin(r.Context()) && ctxpkg.UserID(r.Context()) == 0) {
+		rows, err = l.transform.GetAdminLibrary(r.Context())
+	} else {
+		rows, err = l.transform.GetUserLibrary(r.Context(), ctxpkg.UserID(r.Context()))
+	}
 	if err != nil {
 		l.log.Error("media folders failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -72,11 +80,33 @@ func (l *Library) VirtualFoldersQuery(w http.ResponseWriter, r *http.Request) {
 // SelectableMediaFolders returns folder locations usable by Emby-compatible
 // automation tools such as MoviePilot.
 func (l *Library) SelectableMediaFolders(w http.ResponseWriter, r *http.Request) {
-	rows, err := l.db.QueryContext(r.Context(), `
+	query := `
 		SELECT id, name, COALESCE(root_path, ''), COALESCE(role, '')
 		FROM library
 		WHERE deleted_at IS NULL
-		ORDER BY id ASC`)
+		ORDER BY id ASC`
+	args := []any{}
+	if !(ctxpkg.IsAPIKey(r.Context()) || (ctxpkg.IsAdmin(r.Context()) && ctxpkg.UserID(r.Context()) == 0)) {
+		ids, err := l.transform.UserFolders(r.Context(), ctxpkg.UserID(r.Context()))
+		if err != nil {
+			l.log.Error("selectable media folders user folders failed", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+		if len(ids) == 0 {
+			WriteJSON(w, http.StatusOK, []any{})
+			return
+		}
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		query = `
+			SELECT id, name, COALESCE(root_path, ''), COALESCE(role, '')
+			FROM library
+			WHERE id IN (` + placeholdersForIDs(ids) + `) AND deleted_at IS NULL
+			ORDER BY id ASC`
+	}
+	rows, err := l.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		l.log.Error("selectable media folders failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)
@@ -99,7 +129,7 @@ func (l *Library) SelectableMediaFolders(w http.ResponseWriter, r *http.Request)
 func (l *Library) virtualFolderItems(r *http.Request) ([]any, error) {
 	// For the admin API key, expose all libraries. Management tools use this
 	// endpoint to discover global library ids and paths.
-	if ctxpkg.IsAPIKey(r.Context()) {
+	if ctxpkg.IsAPIKey(r.Context()) || (ctxpkg.IsAdmin(r.Context()) && ctxpkg.UserID(r.Context()) == 0) {
 		rows, err := l.db.QueryContext(r.Context(), `
 			SELECT id, name, COALESCE(root_path, ''), COALESCE(role, '')
 			FROM library

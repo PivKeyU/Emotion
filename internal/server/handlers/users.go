@@ -258,7 +258,15 @@ func (u *Users) Views(w http.ResponseWriter, r *http.Request) {
 	if userID == 0 {
 		userID = ctxpkg.UserID(r.Context())
 	}
-	rows, err := u.transform.GetUserLibrary(r.Context(), userID)
+	var (
+		rows []any
+		err  error
+	)
+	if userID == 0 && (ctxpkg.IsAPIKey(r.Context()) || ctxpkg.IsAdmin(r.Context())) {
+		rows, err = u.transform.GetAdminLibrary(r.Context())
+	} else {
+		rows, err = u.transform.GetUserLibrary(r.Context(), userID)
+	}
 	if err != nil {
 		u.log.Error("GetUserLibrary failed", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)

@@ -119,6 +119,14 @@ curl -X POST "http://localhost:8096/admin/library/scan/start?api_key=change-me-p
   -d '{"library_id":1,"root":"/data/movies","default_type":"movie","scrape":"on"}'
 ```
 
+一键重扫所有已设置根路径的媒体库：
+
+```bash
+curl -X POST "http://localhost:8096/admin/library/scan-all/start?api_key=change-me-please" \
+  -H "Content-Type: application/json" \
+  -d '{"scrape":"on"}'
+```
+
 随后轮询任务进度：
 
 ```text
@@ -310,5 +318,6 @@ go run ./cmd/emotion
 ## 注意事项
 
 - 媒体库根路径会作为默认扫描路径，也会用于第三方工具触发的刷新请求。如果不使用自动刷新或基于路径的扫描，可以留空并在扫描时手动传入路径。
+- 媒体库支持 `is_hidden` 隐藏标记。隐藏库仍可在管理后台维护和扫描，但不会出现在普通 Emby 客户端的媒体库视图中。
 - 扫描速度主要受磁盘性能、文件数量、数据库延迟以及是否需要探测元数据影响。
 - TMDB 刮削会受到 TMDB 速率限制影响，Emotion 会通过并发控制在尽量提高批处理速度的同时避免过度请求。

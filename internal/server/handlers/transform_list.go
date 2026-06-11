@@ -43,21 +43,8 @@ func (t *Transform) VideoList(ctx context.Context, userID int64, s VideoListSear
 
 // VideoListAll searches all libraries for admin/API-key management callers.
 func (t *Transform) VideoListAll(ctx context.Context, s VideoListSearch) (VideoListResult, error) {
-	rows, err := t.db.QueryContext(ctx, "SELECT id FROM library WHERE deleted_at IS NULL ORDER BY id ASC")
+	folders, err := t.AllLibraryIDsForAdmin(ctx)
 	if err != nil {
-		return VideoListResult{}, err
-	}
-	defer rows.Close()
-
-	folders := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return VideoListResult{}, err
-		}
-		folders = append(folders, id)
-	}
-	if err := rows.Err(); err != nil {
 		return VideoListResult{}, err
 	}
 	return t.runVideoListSearch(ctx, 0, s, folders)

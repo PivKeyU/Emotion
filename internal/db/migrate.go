@@ -14,11 +14,13 @@ var migrations = []string{
 		role VARCHAR(255) NULL,
 		root_path TEXT NULL,
 		watch_enabled BOOLEAN NOT NULL DEFAULT false,
-		watch_interval_seconds INTEGER NOT NULL DEFAULT 30
+		watch_interval_seconds INTEGER NOT NULL DEFAULT 30,
+		is_hidden BOOLEAN NOT NULL DEFAULT false
 	)`,
 	`ALTER TABLE library ADD COLUMN IF NOT EXISTS root_path TEXT NULL`,
 	`ALTER TABLE library ADD COLUMN IF NOT EXISTS watch_enabled BOOLEAN NOT NULL DEFAULT false`,
 	`ALTER TABLE library ADD COLUMN IF NOT EXISTS watch_interval_seconds INTEGER NOT NULL DEFAULT 30`,
+	`ALTER TABLE library ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false`,
 	`CREATE INDEX IF NOT EXISTS idx_library_name ON library (name)`,
 	`CREATE INDEX IF NOT EXISTS idx_library_deleted ON library (deleted_at)`,
 

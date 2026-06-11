@@ -21,6 +21,7 @@ type Library struct {
 	RootPath             NullString
 	WatchEnabled         bool
 	WatchIntervalSeconds int
+	IsHidden             bool
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
 	DeletedAt            NullTime

@@ -95,7 +95,11 @@ func (s *Sessions) sweep() {
 	}
 	s.mu.Unlock()
 	for _, sess := range stale {
-		s.recordActivity(context.Background(), sess, time.Now())
+		stoppedAt := sess.LastProgressAt
+		if stoppedAt.IsZero() {
+			stoppedAt = time.Now()
+		}
+		s.recordActivity(context.Background(), sess, stoppedAt)
 	}
 }
 
@@ -139,18 +143,18 @@ func (s *Sessions) List(w http.ResponseWriter, r *http.Request) {
 				"SubtitleOffset": 0, "Shuffle": false, "PlaybackRate": 1,
 				"PlayMethod": sess.PlayMethod,
 			},
-			"AdditionalUsers":       []any{},
-			"RemoteEndPoint":        sess.RemoteAddress,
-			"Protocol":              "HTTP/1.1",
-			"PlayableMediaTypes":    []any{"Video"},
-			"Id":                    sess.PlaySessionID,
-			"ServerId":              s.cfg.EmbyID,
-			"UserId":                itoa(sess.UserID),
-			"UserName":              "",
-			"Client":                sess.Client,
-			"LastActivityDate":      sess.LastProgressAt.UTC().Format(time.RFC3339),
-			"DeviceName":            sess.DeviceName,
-			"DeviceId":              sess.DeviceID,
+			"AdditionalUsers":    []any{},
+			"RemoteEndPoint":     sess.RemoteAddress,
+			"Protocol":           "HTTP/1.1",
+			"PlayableMediaTypes": []any{"Video"},
+			"Id":                 sess.PlaySessionID,
+			"ServerId":           s.cfg.EmbyID,
+			"UserId":             itoa(sess.UserID),
+			"UserName":           "",
+			"Client":             sess.Client,
+			"LastActivityDate":   sess.LastProgressAt.UTC().Format(time.RFC3339),
+			"DeviceName":         sess.DeviceName,
+			"DeviceId":           sess.DeviceID,
 			"NowPlayingItem": map[string]any{
 				"Id":   sess.ItemID,
 				"Name": sess.ItemName,
@@ -255,7 +259,7 @@ func (s *Sessions) Playing(w http.ResponseWriter, r *http.Request) {
 		s.log.Warn("progress upsert failed", "category", "session", "err", err)
 	}
 
-	s.trackEvent(ctx, &body, kind, numericID, userID)
+	s.trackEvent(ctx, r, &body, kind, numericID, userID)
 
 	WriteStatus(w, http.StatusNoContent)
 }
@@ -374,14 +378,13 @@ func nullableProgressID(v int64) db.NullInt64 {
 
 // trackEvent updates the in-memory session for this client and, on stop,
 // writes a row into playback_activity.
-func (s *Sessions) trackEvent(ctx context.Context, body *playingBody, kind string, numericID, userID int64) {
+func (s *Sessions) trackEvent(ctx context.Context, r *http.Request, body *playingBody, kind string, numericID, userID int64) {
 	psid := body.PlaySessionID
 	if psid == "" {
 		psid = body.ItemID
 	}
 	now := time.Now()
-	event := strings.ToLower(strings.TrimSpace(body.EventName))
-	isStop := event == "playbackstopped" || event == "stopped" || event == "playbackstop"
+	isStop := isPlaybackStopEvent(r, body.EventName)
 
 	s.mu.Lock()
 	sess, ok := s.live[psid]
@@ -465,14 +468,7 @@ func (s *Sessions) lookupItemName(ctx context.Context, kind string, numericID in
 }
 
 func (s *Sessions) recordActivity(ctx context.Context, sess *liveSession, stoppedAt time.Time) {
-	playDur := int64(stoppedAt.Sub(sess.StartedAt).Seconds())
-	pauseDur := int64(sess.PausedAccum.Seconds())
-	if playDur < 0 {
-		playDur = 0
-	}
-	if pauseDur < 0 {
-		pauseDur = 0
-	}
+	playDur, pauseDur := activityDurations(sess, stoppedAt)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO playback_activity
 			(date_created, user_id, item_id, item_type, item_name, play_method,
@@ -494,6 +490,36 @@ func (s *Sessions) recordActivity(ctx context.Context, sess *liveSession, stoppe
 	if err != nil {
 		s.log.Warn("playback_activity insert failed", "category", "session", "err", err)
 	}
+}
+
+func isPlaybackStopEvent(r *http.Request, eventName string) bool {
+	event := strings.ToLower(strings.TrimSpace(eventName))
+	if event == "playbackstopped" || event == "stopped" || event == "playbackstop" {
+		return true
+	}
+	if r == nil {
+		return false
+	}
+	return strings.HasSuffix(strings.ToLower(r.URL.Path), "/sessions/playing/stopped")
+}
+
+func activityDurations(sess *liveSession, stoppedAt time.Time) (playDur, pauseDur int64) {
+	playDur = int64(stoppedAt.Sub(sess.StartedAt).Seconds())
+	pause := sess.PausedAccum
+	if sess.IsPaused && !sess.PausedSince.IsZero() && stoppedAt.After(sess.PausedSince) {
+		pause += stoppedAt.Sub(sess.PausedSince)
+	}
+	pauseDur = int64(pause.Seconds())
+	if playDur < 0 {
+		playDur = 0
+	}
+	if pauseDur < 0 {
+		pauseDur = 0
+	}
+	if pauseDur > playDur {
+		pauseDur = playDur
+	}
+	return playDur, pauseDur
 }
 
 func embyItemTypeFromKind(kind string) string {

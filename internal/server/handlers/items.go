@@ -176,6 +176,9 @@ func (i *Items) visibleLibraryIDs(ctx context.Context, r *http.Request) ([]int64
 	if userID := ctxpkg.UserID(r.Context()); userID > 0 {
 		return i.transform.UserFolders(ctx, userID)
 	}
+	if ctxpkg.IsAPIKey(r.Context()) || ctxpkg.IsAdmin(r.Context()) {
+		return i.transform.AllLibraryIDsForAdmin(ctx)
+	}
 	return i.transform.AllLibraryIDs(ctx)
 }
 
