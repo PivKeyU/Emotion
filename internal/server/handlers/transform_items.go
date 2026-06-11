@@ -152,7 +152,21 @@ func (t *Transform) VideoMediaSources(ctx context.Context, videoListID, videoEpi
 	if err != nil {
 		return nil, err
 	}
+	return t.BuildMediaSourcesFromRows(ctx, medias, noMediaAddDefault, playSessionID, apiKey)
+}
 
+// LoadMediasForPlayback exposes the package-private loadVideoMedias so the
+// PlaybackInfo handler can fetch rows, run a sync probe, then call
+// BuildMediaSourcesFromRows on the (possibly updated) slice.
+func (t *Transform) LoadMediasForPlayback(ctx context.Context, videoListID, videoEpisodeID int64) ([]videoMediaRow, error) {
+	return t.loadVideoMedias(ctx, videoListID, videoEpisodeID)
+}
+
+// BuildMediaSourcesFromRows assembles the MediaSources payload from
+// already-loaded video_media rows. Kept separate from the loader so callers
+// (like PlaybackInfo) can mutate the rows in between (e.g. fill in metadata
+// from a synchronous probe).
+func (t *Transform) BuildMediaSourcesFromRows(ctx context.Context, medias []videoMediaRow, noMediaAddDefault bool, playSessionID, apiKey string) ([]any, error) {
 	mediaIDs := make([]int64, 0, len(medias))
 	for _, m := range medias {
 		mediaIDs = append(mediaIDs, m.ID)

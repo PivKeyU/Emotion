@@ -68,9 +68,7 @@ h2, h3 { font-weight: 900; letter-spacing: 0; margin: 0; color: var(--text); }
 
 .view { padding: 30px clamp(16px, 4vw, 40px) 52px; flex: 1; width: 100%; max-width: none; }
 .view h2 { font-size: clamp(34px, 5vw, 56px); color: var(--text); margin-bottom: 8px; line-height: 1.05; border-bottom: 3px double var(--line); padding-bottom: 10px; text-transform: uppercase; }
-.view h2::first-letter { color: var(--accent); }
 .desc { margin: 0 0 22px; color: var(--muted); font-size: 15px; max-width: 760px; text-align: justify; }
-.view > .desc::first-letter { float: left; font-size: 4.5rem; line-height: 0.85; font-weight: 900; color: var(--accent); margin-right: 0.15rem; margin-top: 0.1rem; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-top: 3px double var(--line); border-radius: 0; padding: 20px; margin-bottom: 20px; box-shadow: var(--shadow); break-inside: avoid; }
 .card h3 { font-size: 18px; color: var(--text); margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px dotted var(--line-soft); text-transform: uppercase; }
@@ -187,7 +185,6 @@ tbody tr:hover { background: var(--panel3); }
   .top::before { width: 100%; }
   .view { padding: 20px 16px 32px; }
   .library-grid { grid-template-columns: 1fr; }
-  .view > .desc::first-letter { font-size: 3.4rem; }
 }
 @media(max-width: 560px) {
   .media-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
@@ -430,6 +427,17 @@ tbody tr:hover { background: var(--panel3); }
   </div>
 </div>
 
+<div id="user-history-modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="row" style="margin-bottom: 24px; align-items: center;">
+      <h3 id="user-history-title" style="margin: 0; font-size: 24px; font-style: italic;">设备 / IP 记录</h3>
+      <span class="grow"></span>
+      <button class="btn secondary" id="btn-user-history-close">关闭</button>
+    </div>
+    <div id="user-history-body" class="mono" style="max-height: 60vh; overflow: auto;"></div>
+  </div>
+</div>
+
 <script>
 const LS="emotion.admin.v2";
 const S={url:"",token:"",libs:[],selectedLib:null,mediaOffset:0,mediaTotal:0,mediaStats:null,mediaChildren:{},mediaItems:[],editingMedia:null,browsePath:"/data",logTimer:null,searchTimer:null};
@@ -496,10 +504,13 @@ function renderTMDBBatch(r){renderTMDBProgress($("#tmdb-output"),{status:"done",
 async function loadKeys(){const ks=await api("GET","/admin/api-keys");$("#keys-body").innerHTML=ks.map(k=>`<tr><td>${k.id}</td><td>${esc(k.name)}</td><td>${esc(k.remark||"")}</td><td class=mono>${esc(k.token_prefix)}</td><td>${esc(k.last_used_at||"-")}</td><td><button class="btn sm bad" data-key="${k.id}">撤销</button></td></tr>`).join("")||"<tr><td colspan=6 class=muted>暂无 Key</td></tr>"}
 async function createKey(){const r=await api("POST","/admin/api-keys",{name:$("#key-name").value.trim(),remark:$("#key-remark").value.trim()});$("#new-key").classList.remove("hidden");$("#new-key").textContent="请立刻记录，之后不会再次显示：\n"+r.token;$("#key-name").value="";$("#key-remark").value="";await loadKeys()}
 function userFoldersText(u){const p=u.Policy||{};if(p.EnableAllFolders)return"全部";const ids=(p.EnabledFolders||[]).map(x=>String(x).replace(/^vb-/,""));if(!ids.length)return"全部";return ids.map(id=>{const l=S.libs.find(x=>String(x.id)===String(id));return l?l.name:"#"+id}).join("、")}
-async function loadUsers(){if(!S.libs.length)await loadLibraries();const us=await api("GET","/Users");$("#users-body").innerHTML=(us||[]).map(u=>{const p=u.Policy||{};const roles=[p.IsAdministrator?"管理员":"普通",p.EnableContentDownloading?"可下载":"不可下载"].join(" / ");return `<tr><td>${esc(u.Id)}</td><td>${esc(u.Name)}</td><td>${roles}</td><td>${esc(userFoldersText(u))}</td><td>${p.IsDisabled?"禁用":"正常"}</td><td><button class="btn sm secondary" data-user-edit="${esc(u.Id)}">编辑</button> <button class="btn sm bad" data-user-del="${esc(u.Id)}">删除</button></td></tr>`}).join("")||"<tr><td colspan=6 class=muted>暂无用户</td></tr>"}
+async function loadUsers(){if(!S.libs.length)await loadLibraries();const us=await api("GET","/Users");$("#users-body").innerHTML=(us||[]).map(u=>{const p=u.Policy||{};const roles=[p.IsAdministrator?"管理员":"普通",p.EnableContentDownloading?"可下载":"不可下载"].join(" / ");return `<tr><td>${esc(u.Id)}</td><td>${esc(u.Name)}</td><td>${roles}</td><td>${esc(userFoldersText(u))}</td><td>${p.IsDisabled?"禁用":"正常"}</td><td><button class="btn sm secondary" data-user-edit="${esc(u.Id)}">编辑</button> <button class="btn sm secondary" data-user-history="${esc(u.Id)}" data-user-history-name="${esc(u.Name||"")}">设备记录</button> <button class="btn sm bad" data-user-del="${esc(u.Id)}">删除</button></td></tr>`}).join("")||"<tr><td colspan=6 class=muted>暂无用户</td></tr>"}
 async function createUser(){await api("POST","/Users/New",{Name:$("#user-name").value.trim(),Password:$("#user-pass").value});$("#user-name").value="";$("#user-pass").value="";await loadUsers()}
 async function openUserEdit(id){const u=await api("GET","/Users/"+id);const p=u.Policy||{};const enabled=(p.EnabledFolders||[]).map(x=>String(x).replace(/^vb-/,""));const all=p.EnableAllFolders||!enabled.length;const libs=S.libs.map(l=>`<label class=switch><input type=checkbox class=user-lib value="${l.id}" ${all||enabled.includes(String(l.id))?"checked":""}><span>${esc(l.name)}</span></label>`).join("");$("#media-edit-msg").textContent="";$("#media-edit-form").innerHTML=`<input type=hidden id="edit-user-id" value="${esc(u.Id)}"><div class=col><label>用户名</label><input id="edit-user-name" value="${esc(u.Name||"")}"></div><div class=col><label>新密码</label><input id="edit-user-pass" type=password placeholder="留空不修改"></div><div class="col wide"><label class=switch><input id="edit-user-admin" type=checkbox ${p.IsAdministrator?"checked":""}><span>管理员</span></label><label class=switch><input id="edit-user-disabled" type=checkbox ${p.IsDisabled?"checked":""}><span>禁用账号</span></label><label class=switch><input id="edit-user-download" type=checkbox ${p.EnableContentDownloading?"checked":""}><span>允许下载</span></label><label class=switch><input id="edit-user-all" type=checkbox ${all?"checked":""}><span>允许访问全部媒体库</span></label></div><div class="col wide"><label>可见媒体库</label><div class=actions>${libs||"<span class=muted>暂无媒体库</span>"}</div></div>`;$("#media-edit-modal h3").textContent="编辑用户";$("#media-edit-modal").classList.remove("hidden")}
 async function saveUserEdit(){const id=$("#edit-user-id")&&$("#edit-user-id").value;if(!id)return false;const all=$("#edit-user-all").checked;const enabled=all?[]:$$(".user-lib:checked").map(x=>Number(x.value));const pass=$("#edit-user-pass").value;const body={name:$("#edit-user-name").value.trim(),is_administrator:$("#edit-user-admin").checked,is_disabled:$("#edit-user-disabled").checked,enable_content_downloading:$("#edit-user-download").checked,enable_all_folders:all,enabled_folders:enabled};if(pass)body.password=pass;await api("PATCH","/admin/users/"+id,body);$("#media-edit-modal").classList.add("hidden");$("#media-edit-modal h3").textContent="编辑元数据";await loadUsers();return true}
+function fmtAccessTime(s){if(!s)return"-";const d=new Date(s);return isNaN(d.getTime())?s:d.toLocaleString()}
+async function openUserHistory(id,name){$("#user-history-title").textContent="设备 / IP 记录 - "+(name||id);$("#user-history-body").innerHTML="<div class=muted>加载中…</div>";$("#user-history-modal").classList.remove("hidden");let list=[];try{list=await api("GET","/admin/users/"+id+"/access-log")||[]}catch(e){$("#user-history-body").innerHTML="<div class=muted>加载失败</div>";return}if(!list.length){$("#user-history-body").innerHTML="<div class=muted>暂无记录</div>";return}const rows=list.map(x=>`<tr><td>${esc(x.DeviceName||"-")}</td><td>${esc(x.Client||"-")}${x.Version?" / "+esc(x.Version):""}</td><td>${esc(x.Ip||"-")}</td><td>${esc(fmtAccessTime(x.FirstSeenAt))}</td><td>${esc(fmtAccessTime(x.LastSeenAt))}</td><td>${x.SeenCount|0}</td><td title="${esc(x.UserAgent||"")}" style="max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(x.UserAgent||"-")}</td></tr>`).join("");$("#user-history-body").innerHTML=`<table><thead><tr><th>设备</th><th>客户端</th><th>IP</th><th>首次</th><th>最近</th><th>次数</th><th>User-Agent</th></tr></thead><tbody>${rows}</tbody></table>`}
+function closeUserHistory(){$("#user-history-modal").classList.add("hidden")}
 async function loadLogs(){const q=new URLSearchParams({limit:"250"});if($("#log-level").value)q.set("level",$("#log-level").value);if($("#log-cat").value)q.set("category",$("#log-cat").value);const r=await api("GET","/admin/logs?"+q);$("#logs").innerHTML=(r.items||[]).map(l=>`[${esc(l.time)}] ${esc(l.level)} ${esc(l.category)} ${esc(l.message)} ${esc(JSON.stringify(l.attrs||{}))}`).join("\n")}
 function closeLogModal(){ $("#log-modal").classList.add("hidden");clearInterval(S.logTimer);S.logTimer=null }
 function closeEditModal(){ $("#media-edit-modal").classList.add("hidden");S.editingMedia=null;$("#media-edit-modal h3").textContent="编辑元数据" }
@@ -547,6 +558,8 @@ function bind(){
   $("#media-grid").addEventListener("toggle",e=>{if(e.target.matches("details[data-id]")&&e.target.open)loadChildren(e.target.dataset.id)},true);
   $("#btn-media-edit-close").onclick=closeEditModal;
   $("#media-edit-modal").onclick=e=>{if(e.target.id==="media-edit-modal")closeEditModal()};
+  $("#btn-user-history-close").onclick=closeUserHistory;
+  $("#user-history-modal").onclick=e=>{if(e.target.id==="user-history-modal")closeUserHistory()};
   $("#btn-media-edit-save").onclick=async()=>{if(await saveUserEdit())return;await saveMediaEdit()};
 
   $("#scan-lib").onchange=syncScannerFromLibrary;
@@ -564,7 +577,8 @@ function bind(){
   $("#btn-user-create").onclick=createUser;
   $("#btn-users-load").onclick=loadUsers;
   $("#users-body").onclick=async e=>{
-    const edit=e.target.closest("button[data-user-edit]");if(edit)openUserEdit(edit.dataset.userEdit);
+    const edit=e.target.closest("button[data-user-edit]");if(edit){openUserEdit(edit.dataset.userEdit);return}
+    const hist=e.target.closest("button[data-user-history]");if(hist){openUserHistory(hist.dataset.userHistory,hist.dataset.userHistoryName);return}
     const del=e.target.closest("button[data-user-del]");if(del&&confirm("删除这个用户？")){await api("DELETE","/Users/"+del.dataset.userDel);await loadUsers()}
   };
 
@@ -575,7 +589,7 @@ function bind(){
   $("#log-level").onchange=loadLogs;
   $("#log-cat").onchange=loadLogs;
   $("#btn-save-cfg").onclick=()=>{S.url=$("#cfg-url").value.trim();save();boot()};
-  document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeLogModal();closeEditModal()}});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeLogModal();closeEditModal();closeUserHistory()}});
 }
 function init(){bind();const c=load();if(c&&c.token){S.url=c.url||"";S.token=c.token;$("#login").classList.add("hidden");$("#app").classList.remove("hidden");$("#cfg-url").value=S.url;boot()}else{$("#login-url").value=location.origin}}
 init();

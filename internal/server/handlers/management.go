@@ -447,7 +447,70 @@ func (m *Management) AdminUserUpdate(w http.ResponseWriter, r *http.Request) {
 	WriteStatus(w, http.StatusNoContent)
 }
 
-// SessionMessage accepts a Sakura-style "show message" POST. We have no websocket
+// AdminUserAccessLog returns recent device/IP history rows for a user, newest
+// first. The dashboard renders this in the "设备记录" modal.
+func (m *Management) AdminUserAccessLog(w http.ResponseWriter, r *http.Request) {
+	if !m.requireAdmin(w, r) {
+		return
+	}
+	userID, ok := resolveUserID(chi.URLParam(r, "userId"))
+	if !ok {
+		WriteStatus(w, http.StatusNotFound)
+		return
+	}
+	rows, err := m.db.QueryContext(r.Context(), `
+		SELECT device_id, COALESCE(device_name,''), COALESCE(device_client,''),
+		       COALESCE(device_version,''), ip, COALESCE(user_agent,''),
+		       first_seen_at, last_seen_at, seen_count
+		FROM user_access_log
+		WHERE user_id = ?
+		ORDER BY last_seen_at DESC
+		LIMIT 100
+	`, userID)
+	if err != nil {
+		m.log.Error("access log query failed", "category", "auth", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := make([]map[string]any, 0, 32)
+	for rows.Next() {
+		var (
+			devID, devName, devClient, devVersion, ip, ua string
+			firstSeen, lastSeen                           sql.NullTime
+			seenCount                                     int64
+		)
+		if err := rows.Scan(&devID, &devName, &devClient, &devVersion, &ip, &ua, &firstSeen, &lastSeen, &seenCount); err != nil {
+			m.log.Error("access log scan failed", "category", "auth", "err", err)
+			WriteStatus(w, http.StatusInternalServerError)
+			return
+		}
+		out = append(out, map[string]any{
+			"DeviceId":    devID,
+			"DeviceName":  devName,
+			"Client":      devClient,
+			"Version":     devVersion,
+			"Ip":          ip,
+			"UserAgent":   ua,
+			"FirstSeenAt": nullTimeToISO(firstSeen),
+			"LastSeenAt":  nullTimeToISO(lastSeen),
+			"SeenCount":   seenCount,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		m.log.Error("access log iterate failed", "category", "auth", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	WriteJSON(w, http.StatusOK, out)
+}
+
+func nullTimeToISO(nt sql.NullTime) string {
+	if !nt.Valid {
+		return ""
+	}
+	return nt.Time.UTC().Format("2006-01-02T15:04:05Z")
+}
 // to push to, but we succeed silently so the bot's UX doesn't break.
 func (m *Management) SessionMessage(w http.ResponseWriter, r *http.Request) {
 	if !m.requireAdmin(w, r) {

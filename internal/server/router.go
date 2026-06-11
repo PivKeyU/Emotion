@@ -179,6 +179,7 @@ func registerAuthedRoutes(r chi.Router, prefix string, deps *Dependencies, admin
 		r.Get("/admin/media/{id}/children", admin.AdminMediaChildren)
 		r.Get("/admin/logs", admin.Logs)
 		r.Patch("/admin/users/{userId}", mgmt.AdminUserUpdate)
+		r.Get("/admin/users/{userId}/access-log", mgmt.AdminUserAccessLog)
 		r.Get("/admin/api-keys", admin.APIKeysList)
 		r.Post("/admin/api-keys", admin.APIKeyCreate)
 		r.Delete("/admin/api-keys/{id}", admin.APIKeyRevoke)

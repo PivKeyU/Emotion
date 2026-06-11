@@ -323,6 +323,22 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_subev_pending ON series_subscription_event (delivered_at) WHERE delivered_at IS NULL`,
 	`CREATE INDEX IF NOT EXISTS idx_subev_user ON series_subscription_event (user_id)`,
+
+	`CREATE TABLE IF NOT EXISTS user_access_log (
+		id BIGSERIAL PRIMARY KEY,
+		user_id BIGINT NOT NULL,
+		device_id VARCHAR(255) NOT NULL DEFAULT '',
+		device_name VARCHAR(255) NULL,
+		device_client VARCHAR(255) NULL,
+		device_version VARCHAR(255) NULL,
+		ip VARCHAR(64) NOT NULL DEFAULT '',
+		user_agent TEXT NULL,
+		first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+		seen_count BIGINT NOT NULL DEFAULT 1,
+		CONSTRAINT unx_user_access UNIQUE (user_id, device_id, ip)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_ual_user_last ON user_access_log (user_id, last_seen_at DESC)`,
 }
 
 // Migrate applies the schema. Safe to call every startup.

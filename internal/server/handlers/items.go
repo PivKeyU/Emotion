@@ -28,6 +28,7 @@ type Items struct {
 	cfg       *config.Config
 	log       *slog.Logger
 	transform *Transform
+	probe     *mediaProbeCoordinator
 }
 
 // NewItems builds the handler.
@@ -38,6 +39,7 @@ func NewItems(database *db.DB, c cache.Cache, cfg *config.Config, log *slog.Logg
 		cfg:       cfg,
 		log:       log,
 		transform: NewTransform(database, cfg),
+		probe:     newMediaProbeCoordinator(database, log),
 	}
 }
 
@@ -389,7 +391,14 @@ func (i *Items) PlaybackInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	playSessionID := itemIDStr
-	mediaSources, err := i.transform.VideoMediaSources(ctx, videoListID, videoEpisodeID.Int64, false, playSessionID, ctxpkg.Token(ctx))
+	medias, err := i.transform.LoadMediasForPlayback(ctx, videoListID, videoEpisodeID.Int64)
+	if err != nil {
+		i.log.Error("media sources load", "err", err)
+		WriteStatus(w, http.StatusInternalServerError)
+		return
+	}
+	medias = i.probe.ProbeIfMissing(ctx, medias)
+	mediaSources, err := i.transform.BuildMediaSourcesFromRows(ctx, medias, false, playSessionID, ctxpkg.Token(ctx))
 	if err != nil {
 		i.log.Error("media sources", "err", err)
 		WriteStatus(w, http.StatusInternalServerError)

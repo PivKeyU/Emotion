@@ -195,15 +195,16 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 
 			// Look up user token.
 			var (
-				tokenID   int64
-				userID    int64
-				devClient sql.NullString
-				devName   sql.NullString
-				devID     sql.NullString
+				tokenID    int64
+				userID     int64
+				devClient  sql.NullString
+				devName    sql.NullString
+				devID      sql.NullString
+				devVersion sql.NullString
 			)
 			err = deps.DB.QueryRowContext(r.Context(),
-				"SELECT id, user_id, device_client, device_name, device_id FROM token WHERE token = ? LIMIT 1", token,
-			).Scan(&tokenID, &userID, &devClient, &devName, &devID)
+				"SELECT id, user_id, device_client, device_name, device_id, device_version FROM token WHERE token = ? LIMIT 1", token,
+			).Scan(&tokenID, &userID, &devClient, &devName, &devID, &devVersion)
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) {
 					deps.Logger.Error("auth token lookup failed", "err", err)
@@ -229,6 +230,7 @@ func authGuardBuilder(deps *Dependencies) func(http.Handler) http.Handler {
 
 			ctx := ctxpkg.WithAuth(r.Context(), userID, token, isAdmin.Bool, false)
 			ctx = ctxpkg.WithDevice(ctx, devClient.String, devName.String, devID.String, remoteAddr)
+			touchAccessLog(deps.DB, deps.Logger, userID, devID.String, devName.String, devClient.String, devVersion.String, remoteAddr, r.Header.Get("User-Agent"))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
