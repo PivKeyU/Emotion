@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 type videoMediaRow struct {
 	ID            int64
 	UUID          string
+	ItemID        string
 	Name          string
 	FileSize      int64
 	FileSecond    int64
@@ -25,6 +28,14 @@ type videoMediaRow struct {
 	PathType      string
 	PathURL       string
 }
+
+var (
+	re2160p = regexp.MustCompile(`(?i)(2160p|4k|uhd)`)
+	re1440p = regexp.MustCompile(`(?i)1440p`)
+	re1080p = regexp.MustCompile(`(?i)(1080p|fhd)`)
+	re720p  = regexp.MustCompile(`(?i)720p`)
+	re480p  = regexp.MustCompile(`(?i)480p`)
+)
 
 // loadVideoMedias fetches video_media rows for a list or a specific episode.
 func (t *Transform) loadVideoMedias(ctx context.Context, videoListID, videoEpisodeID int64) ([]videoMediaRow, error) {
@@ -50,6 +61,11 @@ func (t *Transform) loadVideoMedias(ctx context.Context, videoListID, videoEpiso
 		if err := rows.Scan(&r.ID, &r.UUID, &r.Name, &r.FileSize, &r.FileSecond,
 			&r.FileMetadata, &r.FileContainer, &r.FileChapters, &r.PathType, &r.PathURL); err != nil {
 			return nil, err
+		}
+		if videoEpisodeID > 0 {
+			r.ItemID = emby.ItemID(emby.ItemIDTypeVideoEpisode, videoEpisodeID)
+		} else {
+			r.ItemID = emby.ItemID(emby.ItemIDTypeVideoList, videoListID)
 		}
 		out = append(out, r)
 	}
@@ -167,6 +183,8 @@ func (t *Transform) LoadMediasForPlayback(ctx context.Context, videoListID, vide
 // (like PlaybackInfo) can mutate the rows in between (e.g. fill in metadata
 // from a synchronous probe).
 func (t *Transform) BuildMediaSourcesFromRows(ctx context.Context, medias []videoMediaRow, noMediaAddDefault bool, playSessionID, apiKey string) ([]any, error) {
+	sortVideoMedias(medias)
+
 	mediaIDs := make([]int64, 0, len(medias))
 	for _, m := range medias {
 		mediaIDs = append(mediaIDs, m.ID)
@@ -179,6 +197,9 @@ func (t *Transform) BuildMediaSourcesFromRows(ctx context.Context, medias []vide
 	rows := make([]any, 0, len(medias))
 	for _, m := range medias {
 		streams, bitRate := formatStreams(m.FileMetadata)
+		if bitRate <= 0 && m.FileSize > 0 && m.FileSecond > 0 {
+			bitRate = m.FileSize * 8 / m.FileSecond
+		}
 
 		subs := subtitlesByMedia[m.ID]
 		defaultSubID := int64(0)
@@ -236,7 +257,7 @@ func (t *Transform) BuildMediaSourcesFromRows(ctx context.Context, medias []vide
 			"DirectStreamUrl":            directStreamURL,
 			"AddApiKeyToDirectStreamUrl": addAPIKey,
 			"ReadAtNativeFramerate":      false,
-			"ItemId":                     m.UUID,
+			"ItemId":                     mediaItemID(m),
 		}
 		if defaultSubID > 0 {
 			item["DefaultSubtitleStreamIndex"] = defaultSubID
@@ -255,11 +276,80 @@ func (t *Transform) BuildMediaSourcesFromRows(ctx context.Context, medias []vide
 	return rows, nil
 }
 
+func mediaItemID(m videoMediaRow) string {
+	if strings.TrimSpace(m.ItemID) != "" {
+		return m.ItemID
+	}
+	return m.UUID
+}
+
+func sortVideoMedias(medias []videoMediaRow) {
+	sort.SliceStable(medias, func(i, j int) bool {
+		ib, ip := mediaQualityMetrics(medias[i])
+		jb, jp := mediaQualityMetrics(medias[j])
+		if ip != jp {
+			return ip > jp
+		}
+		if ib != jb {
+			return ib > jb
+		}
+		if medias[i].FileSize != medias[j].FileSize {
+			return medias[i].FileSize > medias[j].FileSize
+		}
+		return medias[i].ID < medias[j].ID
+	})
+}
+
+func mediaQualityMetrics(m videoMediaRow) (bitrate int64, pixels int64) {
+	streams, parsedBitrate := formatStreams(m.FileMetadata)
+	bitrate = parsedBitrate
+	if bitrate <= 0 && m.FileSize > 0 && m.FileSecond > 0 {
+		bitrate = m.FileSize * 8 / m.FileSecond
+	}
+	for _, raw := range streams {
+		stream, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		codecType, _ := stream["codec_type"].(string)
+		if codecType != "" && codecType != "video" {
+			continue
+		}
+		w := anyInt64(stream["width"])
+		h := anyInt64(stream["height"])
+		if w > 0 && h > 0 && w*h > pixels {
+			pixels = w * h
+		}
+	}
+	if pixels == 0 {
+		pixels = resolutionPixelsFromText(m.Name + " " + m.PathURL)
+	}
+	return bitrate, pixels
+}
+
+func resolutionPixelsFromText(s string) int64 {
+	switch {
+	case re2160p.MatchString(s):
+		return 3840 * 2160
+	case re1440p.MatchString(s):
+		return 2560 * 1440
+	case re1080p.MatchString(s):
+		return 1920 * 1080
+	case re720p.MatchString(s):
+		return 1280 * 720
+	case re480p.MatchString(s):
+		return 854 * 480
+	default:
+		return 0
+	}
+}
+
 func directStreamURLForMedia(m videoMediaRow, playSessionID, apiKey string) (any, bool) {
 	if playSessionID == "" {
 		return nil, false
 	}
-	return fmt.Sprintf("/Videos/%s/original.%s?line=&api_key=%s", m.UUID, directStreamExtension(m.FileContainer), apiKey), true
+	return fmt.Sprintf("/Videos/%s/original.%s?line=&MediaSourceId=%s_&api_key=%s",
+		mediaItemID(m), directStreamExtension(m.FileContainer), m.UUID, apiKey), true
 }
 
 func directStreamExtension(container string) string {
@@ -287,6 +377,14 @@ func mediaContainer(container string) string {
 		return container[:i]
 	}
 	return container
+}
+
+func itemPath(itemID string) string {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		itemID = "unknown"
+	}
+	return "/items/" + itemID + ".strm"
 }
 
 // HasFavorite reports whether user has favorited (type, id).
@@ -445,7 +543,7 @@ func (t *Transform) itemInfoList(ctx context.Context, userID, numericID int64, i
 		"ExternalUrls":          externalURLs,
 		"MediaSources":          mediaSources,
 		"ProductionLocations":   []any{},
-		"Path":                  "/" + videoType,
+		"Path":                  itemPath(itemID),
 		"Overview":              nullStr(description),
 		"Taglines":              []any{},
 		"Genres":                []any{},
@@ -533,7 +631,7 @@ func (t *Transform) itemInfoSeason(ctx context.Context, numericID int64, itemID 
 		"ForcedSortName":          title,
 		"PremiereDate":            nullTimeToDate(dateAir),
 		"ExternalUrls":            []any{},
-		"Path":                    "/" + itemID,
+		"Path":                    itemPath(itemID),
 		"Overview":                nullStr(description),
 		"Taglines":                []any{},
 		"Genres":                  []any{},
@@ -619,7 +717,7 @@ func (t *Transform) itemInfoEpisode(ctx context.Context, userID, numericID int64
 		"PremiereDate":            nullTimeToDate(dateAir),
 		"ExternalUrls":            []any{},
 		"MediaSources":            mediaSources,
-		"Path":                    "/" + itemID,
+		"Path":                    itemPath(itemID),
 		"Overview":                nullStr(description),
 		"Taglines":                []any{},
 		"Genres":                  []any{},

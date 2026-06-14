@@ -314,7 +314,7 @@ func (s *Shows) Episodes(w http.ResponseWriter, r *http.Request) {
 		item := map[string]any{
 			"Name":                    e.title,
 			"SortName":                e.title,
-			"Path":                    "/.strm",
+			"Path":                    itemPath(episodeItemID),
 			"ServerId":                s.cfg.EmbyID,
 			"Id":                      episodeItemID,
 			"CanDownload":             true,

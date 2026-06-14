@@ -226,7 +226,7 @@ func (t *Transform) runVideoListSearch(ctx context.Context, userID int64, s Vide
 			"ServerId":       t.cfg.EmbyID,
 			"Id":             rowID,
 			"DateCreated":    emby.FormatTime(row.createdAt),
-			"Path":           "/.strm",
+			"Path":           itemPath(rowID),
 			"Genres":         []any{},
 			"People":         []any{},
 			"GenreItems":     []any{},
